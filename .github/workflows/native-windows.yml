@@ -1,0 +1,483 @@
+name: HorusGram Desktop Windows Build
+
+on:
+  push:
+    branches:
+      - main
+      - design-graphite
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Build configuration for a manual run
+        type: choice
+        options:
+          - Debug
+          - Release
+        default: Release
+        required: true
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build HorusGram (x64)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      BUILD_CONFIGURATION: ${{ github.event.inputs.configuration || 'Release' }}
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Apply HorusGram rounded buttons
+        shell: pwsh
+        run: .github/scripts/patch_lib_ui.ps1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+          sdk: 10.0.26100.0
+          toolset: '14.44'
+
+      - name: Enlarge page file
+        uses: al-cheb/configure-pagefile-action@v1.4
+        with:
+          minimum-size: 16GB
+          maximum-size: 32GB
+          disk-root: 'D:'
+
+      - name: Prepare dependency directories
+        shell: pwsh
+        run: |
+          # actions/cache rejects paths containing '..', so resolve them to absolute ones once.
+          $dependencyRoot = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE '..'))
+          $thirdPartyDir = Join-Path $dependencyRoot 'ThirdParty'
+          $librariesDir = Join-Path $dependencyRoot 'Libraries\win64'
+          New-Item -ItemType Directory -Force -Path $thirdPartyDir, $librariesDir | Out-Null
+          "THIRD_PARTY_DIR=$thirdPartyDir" >> $env:GITHUB_ENV
+          "LIBRARIES_DIR=$librariesDir" >> $env:GITHUB_ENV
+
+      - name: Restore third-party build tools
+        id: third-party-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.THIRD_PARTY_DIR }}
+          key: ${{ runner.os }}-hoursgram-x64-third-party-v3-restore
+          restore-keys: |
+            ${{ runner.os }}-hoursgram-x64-third-party-v3-
+
+      - name: Restore native libraries
+        id: native-libraries-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.LIBRARIES_DIR }}
+          key: ${{ runner.os }}-hoursgram-x64-libraries-v4-restore
+          restore-keys: |
+            ${{ runner.os }}-hoursgram-x64-libraries-v4-
+
+      - name: Configure NuGet sources
+        shell: cmd
+        run: |
+          nuget sources Disable -Name "Microsoft Visual Studio Offline Packages" >nul 2>&1
+          nuget sources Add -Source https://api.nuget.org/v3/index.json >nul 2>&1
+          exit /b 0
+
+      - name: Prepare native dependencies
+        id: prepare-dependencies
+        shell: cmd
+        # Qt 6, as Telegram builds Windows x64 now: Qt 5 has no RHI, so the
+        # window would be drawn on the CPU and the D3D11 fixes would not apply.
+        run: Telegram\build\prepare\win.bat silent qt6
+
+      # The libraries cache was 10 GB, all the cache a repository gets, so it
+      # was pushed out right after it was saved and every run built Qt,
+      # FFmpeg and the rest again, about two hours. The build only needs what
+      # the libraries install: the source and build tree of Qt (Qt is used
+      # from its install prefix, Qt-<version>), debug databases, MSBuild
+      # logs and the git histories of the sources go. A library whose key
+      # changes is removed and built anew by prepare.py anyway.
+      - name: Trim native libraries
+        if: steps.prepare-dependencies.outcome == 'success'
+        shell: pwsh
+        run: |
+          $root = $env:LIBRARIES_DIR
+          function Get-Size([string]$path) {
+            $sum = (Get-ChildItem -LiteralPath $path -Recurse -File -Force -ErrorAction SilentlyContinue |
+              Measure-Object -Property Length -Sum).Sum
+            if ($sum) { return $sum } else { return 0 }
+          }
+          $before = Get-Size $root
+          foreach ($tree in Get-ChildItem -LiteralPath $root -Directory -Filter 'qt_*') {
+            $version = $tree.Name.Substring(3)
+            if (Test-Path -LiteralPath (Join-Path $root "Qt-$version")) {
+              Write-Output "Removing the Qt tree $($tree.Name)"
+              Remove-Item -LiteralPath $tree.FullName -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+          Get-ChildItem -LiteralPath $root -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq '.git' -or $_.Name -like '*.tlog' } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+          Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in '.pdb', '.ilk', '.iobj', '.ipdb', '.idb', '.tlog' } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+          $after = Get-Size $root
+          $report = "Native libraries: $([math]::Round($before / 1GB, 2)) GB -> $([math]::Round($after / 1GB, 2)) GB"
+          Write-Output $report
+          "### $report" >> $env:GITHUB_STEP_SUMMARY
+          '| Folder | GB |' >> $env:GITHUB_STEP_SUMMARY
+          '|---|---|' >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem -LiteralPath $root -Directory |
+            ForEach-Object { [pscustomobject]@{ Name = $_.Name; Size = Get-Size $_.FullName } } |
+            Sort-Object Size -Descending | Select-Object -First 15 |
+            ForEach-Object { "| $($_.Name) | $([math]::Round($_.Size / 1GB, 2)) |" >> $env:GITHUB_STEP_SUMMARY }
+
+      - name: Fingerprint prepared dependency state
+        id: dependency-cache-key
+        if: always()
+        shell: pwsh
+        run: |
+          $cacheRoots = @{
+            third_party = Join-Path $env:THIRD_PARTY_DIR 'cache_keys'
+            libraries = Join-Path $env:LIBRARIES_DIR 'cache_keys'
+          }
+
+          foreach ($name in $cacheRoots.Keys) {
+            $cacheRoot = $cacheRoots[$name]
+            $files = @()
+            if (Test-Path -LiteralPath $cacheRoot) {
+              $files = @(Get-ChildItem -LiteralPath $cacheRoot -File -Recurse | Sort-Object FullName)
+            }
+
+            $fingerprint = 'empty'
+            if ($files.Count -gt 0) {
+              $manifest = foreach ($file in $files) {
+                $relativePath = [System.IO.Path]::GetRelativePath($cacheRoot, $file.FullName).Replace('\', '/')
+                "$relativePath=$([System.IO.File]::ReadAllText($file.FullName))"
+              }
+              $manifestPath = Join-Path $env:RUNNER_TEMP "hoursgram-$name-cache-manifest.txt"
+              [System.IO.File]::WriteAllText($manifestPath, (($manifest -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+              $fingerprint = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+
+            "${name}_hash=$fingerprint" >> $env:GITHUB_OUTPUT
+            "${name}_count=$($files.Count)" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Save third-party build tools
+        if: >-
+          always() &&
+          steps.dependency-cache-key.outcome == 'success' &&
+          steps.dependency-cache-key.outputs.third_party_count != '0' &&
+          steps.third-party-cache.outputs.cache-matched-key != format('{0}-hoursgram-x64-third-party-v3-{1}', runner.os, steps.dependency-cache-key.outputs.third_party_hash)
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: ${{ env.THIRD_PARTY_DIR }}
+          key: ${{ runner.os }}-hoursgram-x64-third-party-v3-${{ steps.dependency-cache-key.outputs.third_party_hash }}
+
+      - name: Save native libraries
+        if: >-
+          always() &&
+          steps.dependency-cache-key.outcome == 'success' &&
+          steps.dependency-cache-key.outputs.libraries_count != '0' &&
+          steps.native-libraries-cache.outputs.cache-matched-key != format('{0}-hoursgram-x64-libraries-v4-{1}', runner.os, steps.dependency-cache-key.outputs.libraries_hash)
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: ${{ env.LIBRARIES_DIR }}
+          key: ${{ runner.os }}-hoursgram-x64-libraries-v4-${{ steps.dependency-cache-key.outputs.libraries_hash }}
+
+      - name: Restore incremental CMake outputs
+        id: cmake-build-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            out
+            !out/**/*.pdb
+            !out/**/*.ilk
+            !out/**/*.iobj
+            !out/**/*.ipdb
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-
+            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+
+      # A fresh checkout dates every source file now, later than any restored
+      # object file, so MSBuild would rebuild everything. Files whose content
+      # matches the fingerprints saved with the restored build get an old
+      # date instead, and only the ones that really changed (including the
+      # lib_ui files patched above) stay newer than their objects.
+      - name: Date unchanged sources before the restored build
+        if: steps.cmake-build-cache.outputs.cache-matched-key != ''
+        shell: pwsh
+        run: |
+          $manifest = 'out/hoursgram-source-fingerprints.tsv'
+          if (!(Test-Path -LiteralPath $manifest)) {
+            Write-Output 'The restored build has no fingerprints, everything is rebuilt.'
+            return
+          }
+          $known = @{}
+          foreach ($line in [System.IO.File]::ReadLines((Resolve-Path $manifest))) {
+            $parts = $line.Split("`t")
+            if ($parts.Count -eq 2) {
+              $known[$parts[0]] = $parts[1]
+            }
+          }
+          $old = [datetime]::new(2000, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+          $unchanged = 0
+          $changed = [System.Collections.Generic.List[string]]::new()
+          foreach ($path in (git -c core.quotepath=off ls-files --recurse-submodules)) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              continue
+            }
+            $stream = [System.IO.File]::OpenRead($path)
+            try {
+              $hash = [Convert]::ToHexString([System.Security.Cryptography.SHA1]::HashData($stream))
+            } finally {
+              $stream.Dispose()
+            }
+            if ($known[$path] -eq $hash) {
+              [System.IO.File]::SetLastWriteTimeUtc($path, $old)
+              $unchanged++
+            } else {
+              $changed.Add($path)
+            }
+          }
+          Write-Output "Unchanged: $unchanged, changed or new: $($changed.Count)"
+          "### Sources changed since the restored build: $($changed.Count)" >> $env:GITHUB_STEP_SUMMARY
+          $changed | Select-Object -First 50 | ForEach-Object { "- ``$_``" } >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Configure HorusGram
+        shell: cmd
+        working-directory: Telegram
+        run: configure.bat x64 qt6 -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID || '2040' }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH || 'b18441a1ff607e10a989891a5462e627' }} -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
+
+      - name: Build HorusGram
+        shell: cmd
+        run: |
+          cmake --build out --config %BUILD_CONFIGURATION% --target Telegram --parallel 2 -- /p:CL_MPCount=4 > "%RUNNER_TEMP%\build.log" 2>&1
+          set BUILD_RESULT=%ERRORLEVEL%
+          type "%RUNNER_TEMP%\build.log"
+          exit /b %BUILD_RESULT%
+
+      - name: Download tg-ws-proxy
+        if: success()
+        shell: pwsh
+        run: |
+          # A fixed release with a known hash: whatever is published later
+          # must not get into the build unseen.
+          $tag = "v1.11.4"
+          $sha256 = "454205cbcf76f333934108d893b58a528373bce8096624e27f0b6dc16eea660f"
+          $asset = "TgWsProxy_windows.exe"
+          $url = "https://github.com/Flowseal/tg-ws-proxy/releases/download/$tag/$asset"
+          $dest = Join-Path "out" $env:BUILD_CONFIGURATION $asset
+          Write-Output "Downloading $url -> $dest"
+          Invoke-WebRequest -Uri $url -OutFile $dest -ErrorAction Stop
+          if ((Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash -ne $sha256) {
+            Remove-Item -LiteralPath $dest
+            throw "The hash of $asset does not match"
+          }
+          Write-Output "Downloaded $((Get-Item $dest).Length) bytes"
+
+      # Only a build that went through records what it was built from. After a
+      # failed one the restored fingerprints stay, so everything changed since
+      # the last good build is compiled again next time.
+      - name: Record source fingerprints
+        if: success()
+        shell: pwsh
+        run: |
+          $lines = [System.Collections.Generic.List[string]]::new()
+          foreach ($path in (git -c core.quotepath=off ls-files --recurse-submodules)) {
+            if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
+              continue
+            }
+            $stream = [System.IO.File]::OpenRead($path)
+            try {
+              $hash = [Convert]::ToHexString([System.Security.Cryptography.SHA1]::HashData($stream))
+            } finally {
+              $stream.Dispose()
+            }
+            $lines.Add("$path`t$hash")
+          }
+          [System.IO.File]::WriteAllLines(
+            (Join-Path (Resolve-Path out) 'hoursgram-source-fingerprints.tsv'),
+            $lines)
+          Write-Output "Fingerprinted $($lines.Count) files."
+
+      - name: Report build errors
+        if: failure()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'build.log'
+          if (!(Test-Path -LiteralPath $log)) {
+            return
+          }
+          $pattern = ': error |: fatal error |FAILED: |LNK[0-9]{4}'
+          $found = @(Select-String -LiteralPath $log -Pattern $pattern |
+            Select-Object -ExpandProperty Line -First 40)
+          if ($found.Count -eq 0) {
+            $found = @(Get-Content -LiteralPath $log -Tail 40)
+          }
+          '## Build errors' >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          $found >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          foreach ($line in $found) {
+            Write-Output "::error::$line"
+          }
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: HoursGram-build-log
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save incremental CMake outputs
+        id: save-cmake-build-cache
+        if: >-
+          !cancelled() &&
+          steps.cmake-build-cache.outputs.cache-matched-key != steps.cmake-build-cache.outputs.cache-primary-key
+        uses: actions/cache/save@v6
+        continue-on-error: true
+        with:
+          path: |
+            out
+            !out/**/*.pdb
+            !out/**/*.ilk
+            !out/**/*.iobj
+            !out/**/*.ipdb
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+
+      # The repository has 10 GB of cache in all. Build outputs of other
+      # branches and of older cache versions pushed the dependencies or this
+      # branch's outputs out, so every run started from nothing. Only the
+      # outputs of this branch and of main are kept now.
+      - name: Remove other incremental CMake caches
+        if: >-
+          !cancelled() &&
+          (steps.save-cmake-build-cache.outcome == 'success' ||
+          steps.cmake-build-cache.outputs.cache-matched-key == steps.cmake-build-cache.outputs.cache-primary-key)
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_CACHE_KEY: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          MAIN_CACHE_PREFIX: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100&sort=last_accessed_at&direction=desc"
+          $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -ErrorAction Stop
+          $outputs = @($response.actions_caches | Where-Object {
+            $_.key -match '-hoursgram-x64-(ninja|msbuild)-'
+          })
+          $keepMain = $outputs |
+            Where-Object { $_.key.StartsWith($env:MAIN_CACHE_PREFIX) } |
+            Select-Object -First 1
+          foreach ($cache in $outputs) {
+            if ($cache.key -eq $env:CURRENT_CACHE_KEY -or ($keepMain -and $cache.id -eq $keepMain.id)) {
+              continue
+            }
+            $size = [math]::Round($cache.size_in_bytes / 1GB, 2)
+            Write-Output "Removing $($cache.key) ($size GB)"
+            $deleteUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/caches/$($cache.id)"
+            Invoke-RestMethod -Method Delete -Uri $deleteUri -Headers $headers -ErrorAction Stop | Out-Null
+          }
+
+      - name: Report cache usage
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100"
+          $caches = (Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -ErrorAction Stop).actions_caches
+          $total = ($caches | Measure-Object -Property size_in_bytes -Sum).Sum
+          '### Actions cache' >> $env:GITHUB_STEP_SUMMARY
+          "Restored build outputs: ``${{ steps.cmake-build-cache.outputs.cache-matched-key || 'none' }}``" >> $env:GITHUB_STEP_SUMMARY
+          "Total: $([math]::Round($total / 1GB, 2)) GB of 10 GB" >> $env:GITHUB_STEP_SUMMARY
+          '| Key | Ref | GB |' >> $env:GITHUB_STEP_SUMMARY
+          '|---|---|---|' >> $env:GITHUB_STEP_SUMMARY
+          foreach ($cache in $caches) {
+            "| $($cache.key) | $($cache.ref) | $([math]::Round($cache.size_in_bytes / 1GB, 2)) |" >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Remove superseded dependency caches
+        if: >-
+          !cancelled() &&
+          steps.dependency-cache-key.outcome == 'success' &&
+          steps.dependency-cache-key.outputs.libraries_count != '0' &&
+          steps.dependency-cache-key.outputs.third_party_count != '0'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_KEYS: ${{ runner.os }}-hoursgram-x64-libraries-v4-${{ steps.dependency-cache-key.outputs.libraries_hash }},${{ runner.os }}-hoursgram-x64-third-party-v3-${{ steps.dependency-cache-key.outputs.third_party_hash }}
+          PRUNE_PREFIXES: ${{ runner.os }}-hoursgram-x64-libraries-v4-,${{ runner.os }}-hoursgram-x64-third-party-v3-
+        run: |
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $keep = $env:KEEP_KEYS -split ','
+          $prefixes = $env:PRUNE_PREFIXES -split ','
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100"
+          $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -ErrorAction Stop
+          $stale = $response.actions_caches | Where-Object {
+            $key = $_.key
+            ($prefixes | Where-Object { $key.StartsWith($_) }) -and ($keep -notcontains $key)
+          }
+          foreach ($cache in $stale) {
+            $size = [math]::Round($cache.size_in_bytes / 1GB, 2)
+            Write-Output "Removing $($cache.key) ($size GB)"
+            $deleteUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/caches/$($cache.id)"
+            Invoke-RestMethod -Method Delete -Uri $deleteUri -Headers $headers -ErrorAction Stop | Out-Null
+          }
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: HorusGram-Windows-x64-${{ env.BUILD_CONFIGURATION }}
+          path: out/${{ env.BUILD_CONFIGURATION }}/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The linker map turns addresses of a crash dump into function names.
+      - name: Upload linker map
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: HorusGram-Windows-x64-map
+          path: out/HoursGram.map
+          if-no-files-found: ignore
+          retention-days: 14
+
