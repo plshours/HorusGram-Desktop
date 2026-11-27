@@ -1525,6 +1525,8 @@ PRIVATE
     hoursgram/customization/customization_palette.h
     hoursgram/customization/graphite_frame.cpp
     hoursgram/customization/graphite_frame.h
+    hoursgram/customization/profile_music_balance.cpp
+    hoursgram/customization/profile_music_balance.h
     hoursgram/customization/video_background.cpp
     hoursgram/customization/video_background.h
     hoursgram/index/peer_index.cpp

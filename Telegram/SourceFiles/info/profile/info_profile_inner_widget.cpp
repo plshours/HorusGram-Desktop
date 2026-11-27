@@ -58,6 +58,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 
+#include "hoursgram/customization/profile_music_balance.h"
 #include "styles/style_info.h"
 
 // HorusGram includes
@@ -243,6 +244,12 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 
 	auto result = object_ptr<Ui::VerticalLayout>(parent);
 
+	if (!_savedMessages && !_topic) {
+		HoursGram::Customization::AddProfileMusicBalance(
+			result.data(),
+			_controller,
+			_sublist ? _sublist->sublistPeer().get() : _peer.get());
+	}
 	if (!_savedMessages) {
 		if (const auto user = _peer->asUser()) {
 			AddUnofficialSecurityRiskWarning(result.data(), user);
@@ -254,6 +261,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 	auto blocks = Ui::VerticalBlocks(result.data(), {
 		.skip = skip,
 		.duration = st::infoSlideDuration,
+		.cards = ProfileCards(),
 	});
 	if (_topic && _topic->creating()) {
 		Ui::AddSkip(result.data(), skip);

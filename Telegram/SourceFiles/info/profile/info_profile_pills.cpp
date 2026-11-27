@@ -172,6 +172,11 @@ void PillsRow::layout() {
 void TopBar::setupPills(
 		not_null<Window::SessionController*> controller,
 		Fn<void()> showSavedMusic) {
+	// HorusGram: the track and the wallet balance are a row of cards under
+	// the header instead, see hoursgram/customization/profile_music_balance.
+	if (true) {
+		return;
+	}
 	const auto user = _peer->asUser();
 	if (!user
 		|| _savedMessages

@@ -8,13 +8,16 @@
 
 #include "base/invoke_queued.h"
 #include "ui/widgets/labels.h"
+#include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/painter.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/ui_utility.h"
 #include "styles/style_widgets.h"
 
 #include <QtCore/QPointer>
 #include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
 
 namespace Ui {
 namespace {
@@ -27,7 +30,7 @@ enum class Neighbor {
 
 class Divider final : public RpWidget {
 public:
-	Divider(QWidget *parent, int skip, bool text);
+	Divider(QWidget *parent, int skip, bool text, bool cards = false);
 
 	[[nodiscard]] FlatLabel *label() const;
 	bool setNeighbors(Neighbor above, Neighbor below);
@@ -44,6 +47,7 @@ private:
 
 	const style::DividerBar &_st;
 	const int _skip = 0;
+	const bool _cards = false;
 	object_ptr<FlatLabel> _label = { nullptr };
 	Neighbor _above = Neighbor::Content;
 	Neighbor _below = Neighbor::Content;
@@ -51,10 +55,11 @@ private:
 
 };
 
-Divider::Divider(QWidget *parent, int skip, bool text)
+Divider::Divider(QWidget *parent, int skip, bool text, bool cards)
 : RpWidget(parent)
 , _st(st::defaultDividerLabel.bar)
-, _skip(skip) {
+, _skip(skip)
+, _cards(cards) {
 	if (text) {
 		_label.create(this, st::defaultDividerLabel.label);
 		_label->heightValue() | rpl::on_next([=] {
@@ -96,7 +101,11 @@ int Divider::bottomSkip() const {
 }
 
 int Divider::resizeGetHeight(int newWidth) {
-	const auto top = topSkip();
+	if (_cards && !_label) {
+		// Between two cards the divider is only the gap.
+		return _skip;
+	}
+	const auto top = _cards ? 0 : topSkip();
 	if (!_label) {
 		return top + st::boxDividerHeight + bottomSkip();
 	}
@@ -113,6 +122,10 @@ int Divider::resizeGetHeight(int newWidth) {
 }
 
 void Divider::paintEvent(QPaintEvent *e) {
+	if (_cards) {
+		// The text under a card is plain text on the panel.
+		return;
+	}
 	auto p = QPainter(this);
 
 	const auto top = topSkip();
@@ -130,6 +143,186 @@ void Divider::paintEvent(QPaintEvent *e) {
 	}
 }
 
+// HorusGram: a run of blocks reads as a card, a rounded shape inset from
+// the sides of the panel with the rows drawn on top of it. The rows paint
+// their own background across the full width of the card, so four small
+// squares sit in its corners above them, each cutting a quarter circle out
+// of itself and leaving the panel color behind. Neighbouring blocks with no
+// divider between them make one card, so only the outer corners are cut.
+class Card final : public PaddingWrap<RpWidget> {
+public:
+	Card(
+		QWidget *parent,
+		object_ptr<RpWidget> content,
+		const VerticalBlocks::Cards &cards);
+
+	void setEdges(bool top, bool bottom);
+
+protected:
+	int resizeGetHeight(int newWidth) override;
+	void wrappedSizeUpdated(QSize size) override;
+	void paintEvent(QPaintEvent *e) override;
+
+private:
+	static constexpr auto kCorners = 4;
+
+	void createCorners();
+	void placeCorners();
+	void scheduleCornerUpdate();
+	[[nodiscard]] QRect cardRect() const;
+	[[nodiscard]] int cardRadius(QSize size) const;
+
+	const int _radius = 0;
+	std::array<RpWidget*, kCorners> _corners = { nullptr };
+	bool _top = true;
+	bool _bottom = true;
+	bool _cornerUpdateScheduled = false;
+
+};
+
+Card::Card(
+	QWidget *parent,
+	object_ptr<RpWidget> content,
+	const VerticalBlocks::Cards &cards)
+: PaddingWrap(parent, std::move(content), cards.padding)
+, _radius(cards.radius) {
+	createCorners();
+	sizeValue() | rpl::on_next([=](QSize) {
+		placeCorners();
+	}, lifetime());
+	events() | rpl::filter([](not_null<QEvent*> event) {
+		const auto type = event->type();
+		return (type == QEvent::ChildAdded)
+			|| (type == QEvent::LayoutRequest);
+	}) | rpl::on_next([=](not_null<QEvent*>) {
+		scheduleCornerUpdate();
+	}, lifetime());
+}
+
+void Card::setEdges(bool top, bool bottom) {
+	if (_top == top && _bottom == bottom) {
+		return;
+	}
+	_top = top;
+	_bottom = bottom;
+	placeCorners();
+	update();
+}
+
+QRect Card::cardRect() const {
+	const auto padding = this->padding();
+	return rect().marginsRemoved(
+		QMargins(padding.left(), 0, padding.right(), 0));
+}
+
+int Card::cardRadius(QSize size) const {
+	return std::max(1, std::min(
+		_radius,
+		std::min(size.width(), size.height()) / 2));
+}
+
+void Card::createCorners() {
+	for (auto i = 0; i != kCorners; ++i) {
+		const auto corner = CreateChild<RpWidget>(this);
+		corner->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto right = (i % 2) != 0;
+		const auto bottom = (i / 2) != 0;
+		corner->paintRequest() | rpl::on_next([=] {
+			const auto side = corner->width();
+			auto cut = QPainterPath();
+			cut.addRect(corner->rect());
+			auto circle = QPainterPath();
+			circle.addEllipse(QRectF(
+				right ? -side : 0,
+				bottom ? -side : 0,
+				2 * side,
+				2 * side));
+			auto p = QPainter(corner);
+			auto hq = PainterHighQualityEnabler(p);
+			p.fillPath(cut.subtracted(circle), st::boxBg);
+		}, corner->lifetime());
+		_corners[i] = corner;
+	}
+}
+
+void Card::placeCorners() {
+	const auto card = cardRect();
+	const auto side = card.isEmpty() ? 0 : cardRadius(card.size());
+	for (auto i = 0; i != kCorners; ++i) {
+		const auto corner = _corners[i];
+		const auto right = (i % 2) != 0;
+		const auto bottom = (i / 2) != 0;
+		if (!side || (bottom ? !_bottom : !_top)) {
+			corner->hide();
+			continue;
+		}
+		corner->setGeometry(
+			right ? (card.x() + card.width() - side) : card.x(),
+			bottom ? (card.y() + card.height() - side) : card.y(),
+			side,
+			side);
+		corner->show();
+		corner->raise();
+		corner->update();
+	}
+}
+
+// The rows of a block are created again when it is rebuilt and a fresh
+// child sits above the corners. Any such event puts them back on top, once
+// per event loop pass.
+void Card::scheduleCornerUpdate() {
+	if (_cornerUpdateScheduled) {
+		return;
+	}
+	_cornerUpdateScheduled = true;
+	PostponeCall(this, [=] {
+		_cornerUpdateScheduled = false;
+		placeCorners();
+	});
+}
+
+// A block that hides itself collapses to no height at all, and the card
+// collapses with it so that no empty rounded shape is left behind.
+int Card::resizeGetHeight(int newWidth) {
+	const auto result = PaddingWrap::resizeGetHeight(newWidth);
+	const auto weak = wrapped();
+	return (weak && weak->height()) ? result : 0;
+}
+
+void Card::wrappedSizeUpdated(QSize size) {
+	if (size.height() > 0) {
+		PaddingWrap::wrappedSizeUpdated(size);
+		return;
+	}
+	const auto padding = this->padding();
+	resize(padding.left() + size.width() + padding.right(), 0);
+}
+
+void Card::paintEvent(QPaintEvent *e) {
+	const auto card = cardRect();
+	if (card.isEmpty()) {
+		return;
+	}
+	auto p = QPainter(this);
+	auto hq = PainterHighQualityEnabler(p);
+	const auto radius = cardRadius(card.size());
+	auto path = QPainterPath();
+	path.addRoundedRect(card, radius, radius);
+	if (!_top) {
+		path.addRect(QRect(card.x(), card.y(), card.width(), radius));
+	}
+	if (!_bottom) {
+		path.addRect(QRect(
+			card.x(),
+			card.y() + card.height() - radius,
+			card.width(),
+			radius));
+	}
+	p.setPen(Qt::NoPen);
+	p.setBrush(st::windowBg);
+	p.drawPath(path.simplified());
+}
+
 } // namespace
 
 struct VerticalBlocks::State {
@@ -143,6 +336,7 @@ struct VerticalBlocks::State {
 		Kind kind = Kind::Part;
 		QPointer<RpWidget> part;
 		SlideWrap<RpWidget> *slide = nullptr;
+		QPointer<RpWidget> card;
 		QPointer<SlideWrap<Divider>> divider;
 		bool shown = true;
 		bool filled = false;
@@ -181,10 +375,25 @@ VerticalBlocks::State::State(not_null<VerticalLayout*> layout, Args args)
 }
 
 void VerticalBlocks::State::addPart(Part &&part) {
-	const auto raw = layout->add(std::move(part.widget));
+	auto widget = std::move(part.widget);
+	const auto inner = dynamic_cast<SlideWrap<RpWidget>*>(widget.data());
+	auto card = (Card*)nullptr;
+	if (args.cards) {
+		auto owned = object_ptr<Card>(layout, std::move(widget), *args.cards);
+		card = owned.data();
+		widget = std::move(owned);
+	}
+	const auto raw = layout->add(std::move(widget));
 	const auto index = int(items.size());
-	const auto slide = dynamic_cast<SlideWrap<RpWidget>*>(raw);
-	items.push_back({ .kind = Kind::Part, .part = raw, .slide = slide });
+	const auto slide = inner
+		? inner
+		: dynamic_cast<SlideWrap<RpWidget>*>(raw);
+	items.push_back({
+		.kind = Kind::Part,
+		.part = raw,
+		.slide = slide,
+		.card = card,
+	});
 	if (slide) {
 		slide->toggledValue() | rpl::on_next([=] {
 			refresh();
@@ -206,7 +415,11 @@ int VerticalBlocks::State::addDivider(Kind kind) {
 	const auto text = (kind != Kind::Separator);
 	const auto wrap = layout->add(object_ptr<SlideWrap<Divider>>(
 		layout,
-		object_ptr<Divider>(layout, args.skip, text)));
+		object_ptr<Divider>(
+			layout,
+			args.cards ? args.cards->skip : args.skip,
+			text,
+			args.cards.has_value())));
 	if (args.duration) {
 		wrap->setDuration(*args.duration);
 	}
@@ -336,6 +549,28 @@ void VerticalBlocks::State::apply() {
 	const auto animated = building
 		? anim::type::instant
 		: anim::type::normal;
+	if (args.cards) {
+		const auto count = int(items.size());
+		const auto isPart = [&](int index) {
+			return (index >= 0)
+				&& (index < count)
+				&& (items[index].kind == Kind::Part);
+		};
+		auto previous = -1;
+		for (auto i = 0; i != count; ++i) {
+			if (!items[i].visible) {
+				continue;
+			}
+			if (const auto card = static_cast<Card*>(items[i].card.data())) {
+				auto next = i + 1;
+				while (next < count && !items[next].visible) {
+					++next;
+				}
+				card->setEdges(!isPart(previous), !isPart(next));
+			}
+			previous = i;
+		}
+	}
 	auto changed = false;
 	for (const auto &item : items) {
 		const auto wrap = item.divider.data();

@@ -47,6 +47,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
 
+#include "hoursgram/customization/profile_music_balance.h"
+#include "info/profile/info_profile_actions.h" // ProfileCards.
 #include "styles/style_credits.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_info.h"
@@ -307,10 +309,15 @@ void InnerWidget::createProfileTop() {
 	startTop();
 
 	const auto skip = st::infoProfileSkip;
+	HoursGram::Customization::AddProfileMusicBalance(
+		_top,
+		_controller,
+		_peer);
 	Ui::AddSkip(_top, skip);
 	auto blocks = Ui::VerticalBlocks(_top, {
 		.skip = skip,
 		.duration = st::infoSlideDuration,
+		.cards = Profile::ProfileCards(),
 	});
 	Profile::AddDetailsBlocks(
 		blocks,

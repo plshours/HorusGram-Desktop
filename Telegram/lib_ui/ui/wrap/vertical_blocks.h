@@ -7,6 +7,7 @@
 #pragma once
 
 #include "base/object_ptr.h"
+#include "ui/style/style_core.h"
 #include "ui/text/text_entity.h"
 
 namespace Ui {
@@ -17,10 +18,18 @@ class VerticalLayout;
 
 class VerticalBlocks final {
 public:
+	// HorusGram: every run of blocks is drawn as a rounded card inset from
+	// the sides, and the dividers between runs are plain gaps.
+	struct Cards {
+		style::margins padding;
+		int radius = 0;
+		int skip = 0;
+	};
 	struct Args {
 		int skip = 0;
 		std::optional<int> duration;
 		bool closingDivider = false;
+		std::optional<Cards> cards;
 	};
 	struct Part {
 		object_ptr<RpWidget> widget = { nullptr };

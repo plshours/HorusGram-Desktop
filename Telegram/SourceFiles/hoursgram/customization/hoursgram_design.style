@@ -76,6 +76,7 @@ hoursgramIconPlugins: icon {{ "hoursgram/settings_plugins", hoursgramIconFg }};
 hoursgramIconMusic: icon {{ "hoursgram/settings_music", hoursgramIconFg }};
 hoursgramIconCode: icon {{ "hoursgram/settings_code", hoursgramIconFg }};
 hoursgramMenuIconCode: icon {{ "hoursgram/menu_code", menuIconColor }};
+hoursgramMenuIconMoney: icon {{ "hoursgram/menu_money", menuIconColor }};
 hoursgramIconGifts: icon {{ "hoursgram/settings_gifts", hoursgramIconFg }};
 hoursgramIconMore: icon {{ "hoursgram/settings_more", hoursgramIconFg }};
 hoursgramIconDevices: icon {{ "hoursgram/settings_devices", hoursgramIconFg }};

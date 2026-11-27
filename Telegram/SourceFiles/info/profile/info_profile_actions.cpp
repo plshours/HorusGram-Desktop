@@ -3678,6 +3678,14 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	return result;
 }
 
+std::optional<Ui::VerticalBlocks::Cards> ProfileCards() {
+	return Ui::VerticalBlocks::Cards{
+		.padding = st::infoProfileCardPadding,
+		.radius = st::infoProfileCardRadius,
+		.skip = st::infoProfileCardSkip,
+	};
+}
+
 void AddDetailsBlocks(
 		Ui::VerticalBlocks blocks,
 		not_null<Controller*> controller,

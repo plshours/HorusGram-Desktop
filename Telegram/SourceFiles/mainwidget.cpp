@@ -132,7 +132,9 @@ base::options::toggle OptionUseNewChatView({
 	.id = kOptionUseNewChatView,
 	.name = "New chat view",
 	.description = "Open chats through the new section.",
-	.defaultValue = true,
+	// HorusGram: the classic chat keeps the rounded compose bar, the
+	// Graphite send button and the chat commands, so it stays the default.
+	.defaultValue = false,
 });
 
 } // namespace

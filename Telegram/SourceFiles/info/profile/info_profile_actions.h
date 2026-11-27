@@ -41,6 +41,9 @@ object_ptr<Ui::RpWidget> SetupChannelMembersAndManage(
 	not_null<Ui::RpWidget*> parent,
 	not_null<PeerData*> peer);
 
+// HorusGram: the sections of a profile are drawn as rounded cards.
+[[nodiscard]] std::optional<Ui::VerticalBlocks::Cards> ProfileCards();
+
 void AddDetailsBlocks(
 	Ui::VerticalBlocks blocks,
 	not_null<Controller*> controller,

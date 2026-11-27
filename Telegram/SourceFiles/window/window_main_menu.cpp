@@ -909,11 +909,7 @@ void MainMenu::setupMenu() {
 					_menu,
 					tr::lng_wallet_menu(),
 					st::mainMenuButton,
-					{ &st::walletMenuIcon })));
-		Ui::NewBadge::AddAfterButtonText(
-			wallet->entity(),
-			tr::lng_wallet_menu(),
-			st::mainMenuButton);
+					{ &st::hoursgramMenuIconMoney })));
 		wallet->toggleOn(session->appConfig().value(
 		) | rpl::map([=] {
 			return session->appConfig().walletAvailable();
