@@ -100,9 +100,8 @@ jobs:
       - name: Prepare native dependencies
         id: prepare-dependencies
         shell: cmd
-        # Qt 6, as Telegram builds Windows x64 now: Qt 5 has no RHI, so the
-        # window would be drawn on the CPU and the D3D11 fixes would not apply.
-        run: Telegram\build\prepare\win.bat silent qt6
+        # Qt 6 is the only Qt prepare.py builds now, it takes no qt6 argument.
+        run: Telegram\build\prepare\win.bat skip-release silent
 
       # The libraries cache was 10 GB, all the cache a repository gets, so it
       # was pushed out right after it was saved and every run built Qt,
@@ -265,7 +264,7 @@ jobs:
       - name: Configure HorusGram
         shell: cmd
         working-directory: Telegram
-        run: configure.bat x64 qt6 -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID || '2040' }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH || 'b18441a1ff607e10a989891a5462e627' }} -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
+        run: configure.bat x64 -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID || '2040' }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH || 'b18441a1ff607e10a989891a5462e627' }} -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
       - name: Build HorusGram
         shell: cmd
