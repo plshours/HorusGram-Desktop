@@ -144,6 +144,14 @@ void TopBarActionButton::onStateChanged(
 			isDown() ? 120 : 380,
 			isDown() ? anim::easeOutCubic : anim::easeOutBack);
 	}
+	const auto over = isOver();
+	if (over != ((was & StateFlag::Over) != 0)) {
+		_overAnimation.start(
+			[=] { update(); },
+			over ? 0. : 1.,
+			over ? 1. : 0.,
+			st::universalDuration);
+	}
 }
 
 void TopBarActionButton::setDragHover(bool hover) {
@@ -274,21 +282,6 @@ void TopBarActionButton::paintEvent(QPaintEvent *e) {
 		available,
 		Qt::ElideMiddle);
 	p.drawText(textRect, elidedText, style::al_top);
-}
-
-void TopBarActionButton::onStateChanged(
-		State was,
-		StateChangeSource source) {
-	RippleButton::onStateChanged(was, source);
-
-	const auto over = isOver();
-	if (over != ((was & StateFlag::Over) != 0)) {
-		_overAnimation.start(
-			[=] { update(); },
-			over ? 0. : 1.,
-			over ? 1. : 0.,
-			st::universalDuration);
-	}
 }
 
 QImage TopBarActionButton::prepareRippleMask() const {
