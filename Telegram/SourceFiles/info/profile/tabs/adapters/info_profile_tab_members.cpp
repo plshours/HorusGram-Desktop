@@ -11,14 +11,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "info/profile/info_profile_members.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
+#include "ui/widgets/scroll_area.h"
 #include "ui/rp_widget.h"
 #include "ui/ui_utility.h"
-#include "ui/widgets/scroll_area.h"
 
 namespace Info::Profile {
 namespace {
 
 constexpr auto kEnableSearchMembersAfterCount = 20;
+
+struct MembersTabState final : MediaTabState {
+	std::unique_ptr<MembersState> list;
+};
 
 class MembersTabAdapter final : public MediaTabContent {
 public:
@@ -107,6 +111,18 @@ public:
 
 	void setVisibleRegion(int top, int bottom) override {
 		_members->setVisibleTopBottom(top, bottom);
+	}
+
+	std::unique_ptr<MediaTabState> saveState() override {
+		auto result = std::make_unique<MembersTabState>();
+		result->list = _members->saveState();
+		return result;
+	}
+
+	void restoreState(std::unique_ptr<MediaTabState> state) override {
+		if (const auto my = dynamic_cast<MembersTabState*>(state.get())) {
+			_members->restoreState(std::move(my->list));
+		}
 	}
 
 private:

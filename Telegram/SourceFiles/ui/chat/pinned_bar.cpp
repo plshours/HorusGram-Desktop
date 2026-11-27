@@ -7,13 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/pinned_bar.h"
 
+#include "styles/palette.h"
 #include "ui/chat/message_bar.h"
 #include "ui/effects/spoiler_mess.h"
-#include "ui/widgets/shadow.h"
 #include "ui/widgets/buttons.h"
+#include "ui/widgets/shadow.h"
 #include "ui/wrap/fade_wrap.h"
+
 #include "styles/style_chat_helpers.h"
-#include "styles/palette.h"
 
 #include <QtGui/QtEvents>
 
@@ -122,6 +123,10 @@ void PinnedBar::setRightButton(object_ptr<Ui::RpWidget> button) {
 			_right.button->setDuration(0);
 			_right.button->show(anim::type::instant);
 		}
+
+		// The button is created and replaced deeper in the tree than the bars
+		// container watches, so it wouldn't be placed in the visual Tab order.
+		RefreshVisualTabOrder(_right.button.data());
 	}
 	if (_bar) {
 		updateControlsGeometry(_wrap.geometry());

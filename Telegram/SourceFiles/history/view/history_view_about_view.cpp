@@ -13,7 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/random.h"
 #include "base/unixtime.h"
-#include "ui/effects/premium_stars.h"
 #include "boxes/premium_preview_box.h"
 #include "chat_helpers/stickers_lottie.h"
 #include "core/click_handler_types.h"
@@ -27,13 +26,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
-#include "history/view/history_view_group_call_bar.h"
 #include "history/view/media/history_view_media_generic.h"
 #include "history/view/media/history_view_service_box.h"
-#include "history/view/media/history_view_sticker_player_abstract.h"
 #include "history/view/media/history_view_sticker.h"
+#include "history/view/media/history_view_sticker_player_abstract.h"
 #include "history/view/media/history_view_unique_gift.h"
 #include "history/view/history_view_element.h"
+#include "history/view/history_view_group_call_bar.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
@@ -44,15 +43,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/sections/settings_credits.h" // BuyStarsHandler
 #include "settings/sections/settings_premium.h"
 #include "ui/chat/chat_style.h"
+#include "ui/effects/premium_stars.h"
 #include "ui/image/image_location_factory.h"
 #include "ui/text/custom_emoji_instance.h"
-#include "ui/text/text_utilities.h"
 #include "ui/text/text_options.h"
+#include "ui/text/text_utilities.h"
 #include "ui/dynamic_image.h"
 #include "ui/empty_userpic.h"
 #include "ui/painter.h"
 #include "ui/top_background_gradient.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h" // GroupCallUserpics
 #include "styles/style_credits.h"
@@ -728,6 +729,16 @@ bool AboutView::aboveHistory() const {
 		&& (!_history->isEmpty() || _history->lastMessage()));
 }
 
+void AboutView::setDisplayedEmptyOverride(Fn<bool()> value) {
+	_displayedEmptyOverride = std::move(value);
+}
+
+bool AboutView::displayedEmpty() const {
+	return _displayedEmptyOverride
+		? _displayedEmptyOverride()
+		: _history->isDisplayedEmpty();
+}
+
 bool AboutView::refresh() {
 	if (_history->peer->isVerifyCodes()) {
 		if (_item) {
@@ -751,7 +762,7 @@ bool AboutView::refresh() {
 			loadCommonGroups();
 			setItem(makeNewPeerInfo(user), nullptr);
 			return true;
-		} else if (user && !user->isSelf() && _history->isDisplayedEmpty()) {
+		} else if (user && !user->isSelf() && displayedEmpty()) {
 			if (_item) {
 				return false;
 			} else if (user->requiresPremiumToWrite()
@@ -767,7 +778,7 @@ bool AboutView::refresh() {
 				makeIntro(user);
 			}
 			return true;
-		} else if (monoforum && _history->isDisplayedEmpty()) {
+		} else if (monoforum && displayedEmpty()) {
 			if (_item) {
 				return false;
 			}
@@ -1042,6 +1053,13 @@ AdminLog::OwnedItem AboutView::makeAboutBot(not_null<BotInfo*> info) {
 			Ui::ItemTextBotNoMonoOptions().flags),
 		info->document,
 		info->photo);
+}
+
+void AboutView::makeBotPreview(
+		TextWithEntities text,
+		DocumentData *document,
+		PhotoData *photo) {
+	setItem(makeAboutSimple(std::move(text), document, photo), nullptr);
 }
 
 AdminLog::OwnedItem AboutView::makeAboutSimple(

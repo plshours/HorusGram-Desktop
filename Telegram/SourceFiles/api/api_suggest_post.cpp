@@ -15,8 +15,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/credits.h"
 #include "data/data_changes.h"
 #include "data/data_channel.h"
-#include "data/data_session.h"
 #include "data/data_saved_sublist.h"
+#include "data/data_session.h"
 #include "history/view/controls/history_view_suggest_options.h"
 #include "history/history.h"
 #include "history/history_item.h"
@@ -27,13 +27,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "settings/settings_credits_graphics.h"
 #include "ui/boxes/choose_date_time.h"
-#include "ui/layers/generic_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/emoji_stake_box.h" // InsufficientTonBox
+#include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/popup_menu.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
@@ -372,8 +373,11 @@ void SendSuggest(
 		int starsApproved = 0) {
 	const auto suggestion = item->Get<HistoryMessageSuggestion>();
 	const auto id = item->fullId();
-	const auto withPaymentApproved = [=](int stars) {
-		if (const auto item = show->session().data().message(id)) {
+	const auto withPaymentApproved = [=, weak = std::weak_ptr(state)](
+			int stars) {
+		const auto state = weak.lock();
+		const auto item = show->session().data().message(id);
+		if (state && item) {
 			SendSuggest(show, item, state, modify, done, stars);
 		}
 	};

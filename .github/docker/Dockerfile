@@ -5,7 +5,7 @@
 # and cld3 asks for protobuf on Linux without any way to turn it off. So the
 # shipped environment gets protobuf added back, built exactly the way the
 # fork's own Dockerfile builds it, and nothing else changes.
-ARG BASE=ghcr.io/telegramdesktop/tdesktop/centos_env@sha256:3c3e3653b2c6b38ca9fd064674c593b30873fc00033de52529d8a33fb8f28280
+ARG BASE=ghcr.io/telegramdesktop/tdesktop/centos_env@sha256:e823c87dfeb6c9cbccdb1a06ac26c94db5018b5c0697985e4f86cc0f2804439f
 FROM ${BASE}
 
 USER root

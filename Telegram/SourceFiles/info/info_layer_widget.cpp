@@ -7,19 +7,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/info_layer_widget.h"
 
+#include "core/application.h"
 #include "info/info_content_widget.h"
-#include "info/info_top_bar.h"
 #include "info/info_memento.h"
-#include "ui/rp_widget.h"
-#include "ui/focus_persister.h"
+#include "info/info_top_bar.h"
+#include "main/main_session.h"
 #include "ui/widgets/buttons.h"
 #include "ui/cached_round_corners.h"
+#include "ui/focus_persister.h"
+#include "ui/rp_widget.h"
+#include "window/main_window.h"
 #include "window/section_widget.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
-#include "window/main_window.h"
-#include "main/main_session.h"
-#include "core/application.h"
+
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 
@@ -152,6 +153,12 @@ void LayerWidget::setContentHeight(int height) {
 }
 
 void LayerWidget::showFinished() {
+	if (!_contentWrap) {
+		// parentResized() may have moved the content out into a
+		// MoveMemento and only queued hideSpecialLayer(), so we stay
+		// alive with no content for at least one event loop turn.
+		return;
+	}
 	floatPlayerShowVisible();
 	_contentWrap->showFast();
 }
@@ -198,7 +205,7 @@ void LayerWidget::parentResized() {
 	//} else if (_controller->canShowThirdSectionWithoutResize()) {
 	//	takeToThirdSection();
 	} else {
-		auto newWidth = qMin(
+		auto newWidth = std::min(
 			parentWidth - 2 * st::infoMinimalLayerMargin,
 			st::infoDesiredWidth);
 		resizeToWidth(newWidth);
@@ -346,6 +353,12 @@ void LayerWidget::doSetInnerFocus() {
 }
 
 void LayerWidget::paintEvent(QPaintEvent *e) {
+	if (!_contentWrap) {
+		// parentResized() may have moved the content out into a MoveMemento
+		// and only queued hideSpecialLayer(), and LayerStackWidget renders
+		// us synchronously through Ui::Shadow::grab() during transitions.
+		return;
+	}
 	auto p = QPainter(this);
 
 	const auto clip = e->rect();

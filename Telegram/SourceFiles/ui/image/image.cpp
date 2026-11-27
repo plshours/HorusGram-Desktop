@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/image/image.h"
 
-#include "storage/cache/storage_cache_database.h"
 #include "data/data_session.h"
 #include "main/main_session.h"
+#include "storage/cache/storage_cache_database.h"
 #include "ui/ui_utility.h"
 
 using namespace Images;
@@ -115,7 +115,7 @@ const QPixmap &Image::cached(
 QPixmap Image::prepare(int w, int h, const Images::PrepareArgs &args) const {
 	if (_data.isNull()) {
 		if (h <= 0 && height() > 0) {
-			h = qRound(width() * w / float64(height()));
+			h = int(base::SafeRound(width() * w / float64(height())));
 		}
 		return Empty()->prepare(w, h, args);
 	}
@@ -140,10 +140,25 @@ QPixmap Image::prepare(int w, int h, const Images::PrepareArgs &args) const {
 		p.fillRect(((outerw - w) / 2) + w, 0, result.width() - (((outerw - w) / 2) + w), result.height(), Qt::black);
 	}
 	if (h < outerh) {
-		p.fillRect(qMax(0, (outerw - w) / 2), 0, qMin(result.width(), w), (outerh - h) / 2, Qt::black);
-		p.fillRect(qMax(0, (outerw - w) / 2), ((outerh - h) / 2) + h, qMin(result.width(), w), result.height() - (((outerh - h) / 2) + h), Qt::black);
+		p.fillRect(
+			std::max(0, (outerw - w) / 2),
+			0,
+			std::min(result.width(), w),
+			(outerh - h) / 2,
+			Qt::black);
+		p.fillRect(
+			std::max(0, (outerw - w) / 2),
+			((outerh - h) / 2) + h,
+			std::min(result.width(), w),
+			result.height() - (((outerh - h) / 2) + h),
+			Qt::black);
 	}
-	p.fillRect(qMax(0, (outerw - w) / 2), qMax(0, (outerh - h) / 2), qMin(result.width(), w), qMin(result.height(), h), Qt::white);
+	p.fillRect(
+		std::max(0, (outerw - w) / 2),
+		std::max(0, (outerh - h) / 2),
+		std::min(result.width(), w),
+		std::min(result.height(), h),
+		Qt::white);
 	p.end();
 
 	result = Round(std::move(result), args.options);

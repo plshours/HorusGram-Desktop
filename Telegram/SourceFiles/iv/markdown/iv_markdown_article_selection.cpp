@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/markdown/iv_markdown_article_selection.h"
+
 #include "iv/markdown/iv_markdown_prepare_links.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/fields/input_field.h"
@@ -106,6 +107,9 @@ void RefreshBlockSegmentRect(
 	case SelectableSegmentKind::Photo:
 	case SelectableSegmentKind::Media:
 		segment->outerRect = block.visibleMediaRect;
+		break;
+	case SelectableSegmentKind::ButtonRow:
+		segment->outerRect = block.outer;
 		break;
 	case SelectableSegmentKind::CodeBlock:
 		segment->outerRect = block.outer;
@@ -321,6 +325,21 @@ void RefreshBlockSegmentRect(
 		block.leaf);
 }
 
+[[nodiscard]] TextForMimeData CopyTextForButtonRowBlock(
+		const LaidOutBlock &block) {
+	auto result = TextForMimeData();
+	for (const auto &button : block.buttons) {
+		if (button.label.isEmpty()) {
+			continue;
+		}
+		if (!result.empty()) {
+			result.append(u" "_q);
+		}
+		result.append(button.label.toTextForMimeData());
+	}
+	return result;
+}
+
 [[nodiscard]] int AddSelectableSegment(
 		std::vector<SelectableSegment> *segments,
 		SelectableSegment segment) {
@@ -328,29 +347,6 @@ void RefreshBlockSegmentRect(
 	segment.length = std::max(segment.length, 0);
 	segments->push_back(std::move(segment));
 	return segment.index;
-}
-
-[[nodiscard]] int CompareSelectionPositions(
-		MarkdownArticleSelectionPosition a,
-		MarkdownArticleSelectionPosition b) {
-	if (a.segment != b.segment) {
-		return (a.segment < b.segment) ? -1 : 1;
-	}
-	if (a.offset != b.offset) {
-		return (a.offset < b.offset) ? -1 : 1;
-	}
-	return 0;
-}
-
-[[nodiscard]] MarkdownArticleSelection NormalizeSelection(
-		MarkdownArticleSelection selection) {
-	if (selection.empty()) {
-		return {};
-	}
-	if (CompareSelectionPositions(selection.from, selection.to) > 0) {
-		std::swap(selection.from, selection.to);
-	}
-	return selection;
 }
 
 [[nodiscard]] int LastTableCellSegmentIndex(
@@ -368,7 +364,12 @@ void RefreshBlockSegmentRect(
 	return result;
 }
 
-[[nodiscard]] std::optional<int> SingleTableCellSelection(
+struct TableEndpointCell {
+	int segment = -1;
+	bool leavesTable = false;
+};
+
+[[nodiscard]] std::optional<TableEndpointCell> SingleTableCellSelection(
 		const PaintSelectionState &selectionState,
 		int tableSegmentIndex) {
 	if (selectionState.empty()
@@ -414,7 +415,11 @@ void RefreshBlockSegmentRect(
 	if (tableHit || multipleCells || cellSegment < 0 || spansWholeTable) {
 		return std::nullopt;
 	}
-	return cellSegment;
+	return TableEndpointCell{
+		.segment = cellSegment,
+		.leavesTable = (normalized.from.segment < tableSegmentIndex)
+			|| (normalized.to.segment > lastCellSegment),
+	};
 }
 
 [[nodiscard]] std::optional<TextSelection> BaseTextSelectionForSegment(
@@ -682,13 +687,36 @@ void ApplyRichPageSliceEndTrim(TextWithEntities *target, int offset) {
 	return false;
 }
 
+[[nodiscard]] bool LeafSourceInStructuralSelection(
+		const PreparedEditLeafSource &source,
+		const PreparedEditSelection &selection) {
+	switch (selection.kind) {
+	case PreparedEditSelectionKind::Blocks:
+		return PathInBlockRange(source.block, selection.blocks);
+	case PreparedEditSelectionKind::ListItems:
+		return (source.kind == PreparedEditLeafKind::ListItemText)
+			&& (source.block == selection.listItems.block)
+			&& IndexInRange(
+				source.listItemIndex,
+				selection.listItems.from,
+				selection.listItems.till);
+	case PreparedEditSelectionKind::TableRows:
+	case PreparedEditSelectionKind::TableCells:
+	case PreparedEditSelectionKind::None:
+		return false;
+	}
+	return false;
+}
+
 [[nodiscard]] bool BlockBelongsToStructuralSelection(
 		const LaidOutBlock &block,
 		const PreparedEditSelection &selection) {
 	return (block.editListItem
 		&& ListItemSourceInStructuralSelection(*block.editListItem, selection))
 		|| (block.editBlock
-			&& BlockSourceInStructuralSelection(*block.editBlock, selection));
+			&& BlockSourceInStructuralSelection(*block.editBlock, selection))
+		|| (block.editLeaf
+			&& LeafSourceInStructuralSelection(*block.editLeaf, selection));
 }
 
 [[nodiscard]] bool WholeSegmentStructurallySelected(
@@ -704,6 +732,7 @@ void ApplyRichPageSliceEndTrim(TextWithEntities *target, int offset) {
 	case SelectableSegmentKind::Placeholder:
 	case SelectableSegmentKind::Photo:
 	case SelectableSegmentKind::Media:
+	case SelectableSegmentKind::ButtonRow:
 		return BlockBelongsToStructuralSelection(
 			*segment.block,
 			*selectionState.structuralSelection);
@@ -745,16 +774,18 @@ void ApplyRichPageSliceEndTrim(TextWithEntities *target, int offset) {
 		return std::nullopt;
 	}
 	if (segment.tableSegmentIndex >= 0) {
-		if (const auto singleCell = SingleTableCellSelection(
-				selectionState,
-				segment.tableSegmentIndex);
-			singleCell && *singleCell != segment.index) {
+		const auto endpointCell = SingleTableCellSelection(
+			selectionState,
+			segment.tableSegmentIndex);
+		if (endpointCell
+			&& !endpointCell->leavesTable
+			&& (endpointCell->segment != segment.index)) {
 			return std::nullopt;
 		}
-	}
-	if (segment.tableSegmentIndex >= 0
-		&& TableSegmentSelected(selectionState, segment.tableSegmentIndex)) {
-		return std::nullopt;
+		if ((!endpointCell || selectionState.hasStructuralSelection())
+			&& TableSegmentSelected(selectionState, segment.tableSegmentIndex)) {
+			return std::nullopt;
+		}
 	}
 	if (const auto structural = StructuralTextSelectionForSegment(
 			segment,
@@ -843,6 +874,37 @@ void ApplyRichPageSliceEndTrim(TextWithEntities *target, int offset) {
 
 } // namespace
 
+int CompareSelectionPositions(
+		MarkdownArticleSelectionPosition a,
+		MarkdownArticleSelectionPosition b) {
+	if (a.segment != b.segment) {
+		return (a.segment < b.segment) ? -1 : 1;
+	}
+	if (a.offset != b.offset) {
+		return (a.offset < b.offset) ? -1 : 1;
+	}
+	return 0;
+}
+
+MarkdownArticleSelection NormalizeSelection(
+		MarkdownArticleSelection selection) {
+	if (selection.empty()) {
+		return {};
+	}
+	if (CompareSelectionPositions(selection.from, selection.to) > 0) {
+		std::swap(selection.from, selection.to);
+	}
+	return selection;
+}
+
+MarkdownArticleSelectionEndpoint MakeSelectionEndpoint(
+		const MarkdownArticleHitTestResult &result) {
+	return {
+		.segment = result.segmentIndex,
+		.direct = result.direct,
+	};
+}
+
 void CollectSelectableSegments(
 		std::vector<LaidOutBlock> *blocks,
 		std::vector<SelectableSegment> *segments) {
@@ -871,7 +933,7 @@ void CollectSelectableSegments(
 			segment.textRect = block.textRect;
 			segment.textWidth = block.textWidth;
 			segment.align = block.flowTextAlign;
-			segment.length = block.leaf.length();
+			segment.length = block.leaf.length() - block.skipBlockLength;
 			block.segmentIndex = AddSelectableSegment(
 				segments,
 				std::move(segment));
@@ -951,7 +1013,7 @@ void CollectSelectableSegments(
 		case PreparedBlockKind::Placeholder:
 		case PreparedBlockKind::Photo:
 		case PreparedBlockKind::Video:
-		case PreparedBlockKind::Audio:
+		case PreparedBlockKind::Document:
 		case PreparedBlockKind::Map:
 		case PreparedBlockKind::Channel:
 		case PreparedBlockKind::GroupedMedia: {
@@ -1025,6 +1087,16 @@ void CollectSelectableSegments(
 			}
 			continue;
 		}
+		case PreparedBlockKind::ButtonRow: {
+			auto segment = SelectableSegment();
+			segment.kind = SelectableSegmentKind::ButtonRow;
+			segment.block = &block;
+			segment.outerRect = block.outer;
+			segment.length = 1;
+			block.segmentIndex = AddSelectableSegment(
+				segments,
+				std::move(segment));
+		} break;
 		case PreparedBlockKind::List:
 		case PreparedBlockKind::ListItem:
 		case PreparedBlockKind::Quote:
@@ -1313,15 +1385,6 @@ std::optional<TextSelection> TextSelectionForSegment(
 		false);
 }
 
-std::optional<TextSelection> TextSelectionForSegmentIndex(
-		const PaintSelectionState &selectionState,
-		int index) {
-	const auto segment = FindSegment(selectionState.segments, index);
-	return segment
-		? TextSelectionForSegment(*segment, selectionState)
-		: std::nullopt;
-}
-
 std::optional<TextSelection> PaintTextSelectionForSegment(
 		const SelectableSegment &segment,
 		const PaintSelectionState &selectionState) {
@@ -1408,7 +1471,9 @@ TextForMimeData TextForSegment(
 	switch (segment.kind) {
 	case SelectableSegmentKind::TextLeaf:
 		return segment.leaf
-			? segment.leaf->toTextForMimeData(selection)
+			? segment.leaf->toTextForMimeData(TextSelection(
+				selection.from,
+				uint16(std::min(int(selection.to), SegmentLength(segment)))))
 			: TextForMimeData();
 	case SelectableSegmentKind::CodeBlock:
 		return segment.block
@@ -1433,6 +1498,10 @@ TextForMimeData TextForSegment(
 	case SelectableSegmentKind::Media:
 		return segment.block
 			? CopyTextForSingleMediaBlock(*segment.block)
+			: TextForMimeData();
+	case SelectableSegmentKind::ButtonRow:
+		return segment.block
+			? CopyTextForButtonRowBlock(*segment.block)
 			: TextForMimeData();
 	}
 	return TextForMimeData();
@@ -1512,9 +1581,7 @@ std::vector<RichPage::Block> RichPageBlocksForSelectedSegments(
 	// past unresolvable segments; only directly addressable low-nesting
 	// text leaves get edge-trimmed.
 	selection = NormalizeSelection(selection);
-	if (selection.empty()
-		|| selection.from.segment == selection.to.segment
-		|| page.blocks.empty()) {
+	if (selection.empty() || page.blocks.empty()) {
 		return {};
 	}
 	auto start = std::optional<RichPageSliceEndpoint>();

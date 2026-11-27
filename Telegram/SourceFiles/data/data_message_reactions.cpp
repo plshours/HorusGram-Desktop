@@ -8,40 +8,39 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_message_reactions.h"
 
 #include "api/api_global_privacy.h"
+#include "apiwrap.h"
+#include "base/call_delayed.h"
+#include "base/random.h"
+#include "base/timer_rpl.h"
+#include "base/unixtime.h"
 #include "calls/group/calls_group_call.h"
 #include "calls/group/calls_group_messages.h"
 #include "chat_helpers/stickers_lottie.h"
 #include "core/application.h"
-#include "history/history.h"
-#include "history/history_item.h"
-#include "history/history_item_components.h"
-#include "main/main_session.h"
-#include "main/main_session_settings.h"
-#include "main/main_app_config.h"
-#include "main/session/send_as_peers.h"
 #include "data/components/credits.h"
-#include "data/data_channel.h"
-#include "data/data_user.h"
-#include "data/data_session.h"
-#include "data/data_histories.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_changes.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
 #include "data/data_file_origin.h"
+#include "data/data_histories.h"
 #include "data/data_peer_values.h"
 #include "data/data_saved_sublist.h"
-#include "data/stickers/data_custom_emoji.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "history/history_item_components.h"
+#include "main/session/send_as_peers.h"
+#include "main/main_app_config.h"
+#include "main/main_session.h"
+#include "main/main_session_settings.h"
+#include "mtproto/mtproto_config.h"
 #include "storage/localimageloader.h"
 #include "ui/image/image_location_factory.h"
 #include "ui/animated_icon.h"
-#include "mtproto/mtproto_config.h"
-#include "base/timer_rpl.h"
-#include "base/call_delayed.h"
-#include "base/unixtime.h"
-#include "apiwrap.h"
-#include "styles/style_chat.h"
 
-#include "base/random.h"
+#include "styles/style_chat.h"
 
 // HorusGram includes
 #include "ayu/ayu_settings.h"
@@ -199,13 +198,6 @@ PossibleItemReactionsRef LookupPossibleReactions(
 		}
 	}
 	const auto session = &peer->session();
-	if (const auto channel = peer->asChannel()) {
-		if ((!channel->amCreator())
-			&& (channel->adminRights() & ChatAdminRight::Anonymous)
-			&& (session->sendAsPeers().resolveChosen(channel) == channel)) {
-			return {};
-		}
-	}
 	const auto reactions = &session->data().reactions();
 	const auto &full = reactions->list(Reactions::Type::Active);
 	const auto &top = reactions->list(Reactions::Type::Top);
@@ -497,10 +489,6 @@ const std::vector<Reaction> &Reactions::list(Type type) const {
 	Unexpected("Type in Reactions::list.");
 }
 
-const std::vector<MyTagInfo> &Reactions::myTagsInfo() const {
-	return _myTags.find((SavedSublist*)nullptr)->second.info;
-}
-
 const QString &Reactions::myTagTitle(const ReactionId &id) const {
 	const auto i = _myTags.find((SavedSublist*)nullptr);
 	if (i != end(_myTags)) {
@@ -747,7 +735,7 @@ void Reactions::preloadImageFor(const ReactionId &id) {
 		loadImage(set, lookupPaid()->centerIcon, true);
 		return;
 	}
-	auto &list = set.effect ? _effects : _available;
+	const auto &list = set.effect ? _effects : _available;
 	const auto i = ranges::find(list, id, &Reaction::id);
 	const auto document = (i == end(list))
 		? nullptr
@@ -1274,20 +1262,6 @@ void Reactions::defaultUpdated() {
 	_defaultUpdated.fire({});
 }
 
-void Reactions::myTagsUpdated() {
-	if (_genericAnimations.empty()) {
-		requestGeneric();
-	}
-	_myTagsUpdated.fire({});
-}
-
-void Reactions::tagsUpdated() {
-	if (_genericAnimations.empty()) {
-		requestGeneric();
-	}
-	_tagsUpdated.fire({});
-}
-
 void Reactions::effectsUpdated() {
 	_effectsUpdated.fire({});
 }
@@ -1463,6 +1437,7 @@ std::optional<Reaction> Reactions::parse(const MTPAvailableReaction &entry) {
 			? _owner->processDocument(*data.varound_animation()).get()
 			: nullptr),
 		.active = !data.is_inactive(),
+		.premium = data.is_premium(),
 	});
 }
 

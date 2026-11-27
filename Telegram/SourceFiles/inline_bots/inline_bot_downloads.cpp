@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/labels.h"
+
 #include "styles/style_chat.h"
 
 #include <QtCore/QBuffer>
@@ -100,7 +101,7 @@ void Downloads::progress(PeerId botId, DownloadId id) {
 	const auto total = loader->fullSize();
 	const auto ready = loader->currentOffset();
 
-	auto &list = _lists[botId].list;
+	const auto &list = _lists[botId].list;
 	const auto j = ranges::find(
 		list,
 		id,
@@ -262,7 +263,7 @@ void Downloads::action(
 	}
 }
 
-[[nodiscard]] auto Downloads::progress(not_null<UserData*> bot)
+auto Downloads::progress(not_null<UserData*> bot)
 ->rpl::producer<DownloadsProgress> {
 	read();
 

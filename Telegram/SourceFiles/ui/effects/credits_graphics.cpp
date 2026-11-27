@@ -10,28 +10,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QDateTime>
 
 #include "data/data_credits.h"
-#include "data/data_file_origin.h"
 #include "data/data_document.h"
 #include "data/data_document_media.h"
+#include "data/data_file_origin.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
-#include "history/view/media/history_view_sticker_player.h"
 #include "info/bot/starref/info_bot_starref_common.h"
-#include "info/userpic/info_userpic_emoji_builder_preview.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/effects/premium_graphics.h"
 #include "ui/effects/spoiler_mess.h"
-#include "ui/empty_userpic.h"
-#include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/text/custom_emoji_instance.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/fields/number_input.h"
 #include "ui/wrap/padding_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/empty_userpic.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
+
 #include "styles/style_channel_earn.h"
 #include "styles/style_color_indices.h"
 #include "styles/style_credits.h"
@@ -104,43 +103,47 @@ QByteArray CreditsIconSvg(int strokeWidth) {
 
 } // namespace
 
-QImage GenerateStars(int height, int count) {
+QImage GenerateStars(int height, int count, int ratio) {
 	constexpr auto kOutlineWidth = .6;
 	constexpr auto kStrokeWidth = 3;
 	constexpr auto kShift = 3;
 
+	if (!ratio) {
+		ratio = style::DevicePixelRatio();
+	}
 	auto svg = QSvgRenderer(CreditsIconSvg(kStrokeWidth));
 	svg.setViewBox(svg.viewBox() + Margins(kStrokeWidth));
 
 	const auto starSize = Size(height - kOutlineWidth * 2);
 
 	auto frame = QImage(
-		QSize(
-			(height + kShift * (count - 1)) * style::DevicePixelRatio(),
-			height * style::DevicePixelRatio()),
+		QSize((height + kShift * (count - 1)) * ratio, height * ratio),
 		QImage::Format_ARGB32_Premultiplied);
-	frame.setDevicePixelRatio(style::DevicePixelRatio());
+	frame.setDevicePixelRatio(ratio);
 	frame.fill(Qt::transparent);
 	const auto drawSingle = [&](QPainter &q) {
 		const auto s = kOutlineWidth;
 		q.save();
 		q.translate(s, s);
-		q.setCompositionMode(QPainter::CompositionMode_Clear);
-		svg.render(&q, QRectF(QPointF(s, 0), starSize));
-		svg.render(&q, QRectF(QPointF(s, s), starSize));
-		svg.render(&q, QRectF(QPointF(0, s), starSize));
-		svg.render(&q, QRectF(QPointF(-s, s), starSize));
-		svg.render(&q, QRectF(QPointF(-s, 0), starSize));
-		svg.render(&q, QRectF(QPointF(-s, -s), starSize));
-		svg.render(&q, QRectF(QPointF(0, -s), starSize));
-		svg.render(&q, QRectF(QPointF(s, -s), starSize));
-		q.setCompositionMode(QPainter::CompositionMode_SourceOver);
+		if (count > 1) {
+			// Cut a gap in the star below, they overlap by kShift.
+			q.setCompositionMode(QPainter::CompositionMode_Clear);
+			svg.render(&q, QRectF(QPointF(s, 0), starSize));
+			svg.render(&q, QRectF(QPointF(s, s), starSize));
+			svg.render(&q, QRectF(QPointF(0, s), starSize));
+			svg.render(&q, QRectF(QPointF(-s, s), starSize));
+			svg.render(&q, QRectF(QPointF(-s, 0), starSize));
+			svg.render(&q, QRectF(QPointF(-s, -s), starSize));
+			svg.render(&q, QRectF(QPointF(0, -s), starSize));
+			svg.render(&q, QRectF(QPointF(s, -s), starSize));
+			q.setCompositionMode(QPainter::CompositionMode_SourceOver);
+		}
 		svg.render(&q, Rect(starSize));
 		q.restore();
 	};
 	{
 		auto q = QPainter(&frame);
-		q.translate(frame.width() / style::DevicePixelRatio() - height, 0);
+		q.translate(frame.width() / ratio - height, 0);
 		for (auto i = count; i > 0; --i) {
 			drawSingle(q);
 			q.translate(-kShift, 0);
@@ -342,7 +345,7 @@ PaintRoundImageCallback GenerateCreditsPaintEntryCallback(
 
 	rpl::single(rpl::empty_value()) | rpl::then(
 		photo->session().downloaderTaskFinished()
-	) | rpl::on_next([=] {
+	) | rpl::on_next([=, state = state.get()] {
 		using Size = Data::PhotoSize;
 		if (const auto large = state->view->image(Size::Large)) {
 			state->imagePtr = large;
@@ -392,7 +395,7 @@ PaintRoundImageCallback GenerateCreditsPaintEntryCallback(
 
 	rpl::single(rpl::empty_value()) | rpl::then(
 		video->session().downloaderTaskFinished()
-	) | rpl::on_next([=] {
+	) | rpl::on_next([=, state = state.get()] {
 		if (const auto thumbnail = state->view->thumbnail()) {
 			state->imagePtr = thumbnail;
 		}
@@ -510,32 +513,6 @@ PaintRoundImageCallback GeneratePaidMediaPaintCallback(
 		GeneratePaidPhotoPaintCallback(photo, update),
 		GeneratePaidPhotoPaintCallback(second, update),
 		totalCount);
-}
-
-PaintRoundImageCallback GenerateGiftStickerUserpicCallback(
-		not_null<Main::Session*> session,
-		uint64 stickerId,
-		Fn<void()> update) {
-	struct State {
-		std::optional<UserpicBuilder::PreviewPainter> painter;
-		int size = 0;
-	};
-	const auto state = std::make_shared<State>();
-	//const auto document = session->data().document(stickerId);
-	return [=](Painter &p, int x, int y, int outerWidth, int size) {
-		if (state->size != size || !state->painter) {
-			state->size = size;
-			state->painter.emplace(size * M_SQRT2);
-			state->painter->setDocument(
-				session->data().document(stickerId),
-				update);
-		}
-		const auto skip = int(base::SafeRound((size * (M_SQRT2 - 1.)) / 2.));
-		auto hq = PainterHighQualityEnabler(p);
-		p.translate(x - skip, y - skip);
-		state->painter->paintForeground(p);
-		p.translate(skip - x, skip - y);
-	};
 }
 
 Fn<PaintRoundImageCallback(Fn<void()>)> PaintPreviewCallback(

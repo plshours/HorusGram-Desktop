@@ -12,8 +12,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unique_qptr.h"
 #include "base/weak_qptr.h"
 #include "ui/effects/animations.h"
-#include "ui/widgets/side_bar_button.h"
 #include "ui/widgets/scroll_area.h"
+#include "ui/widgets/side_bar_button.h"
 
 namespace HoursGram::Customization {
 class GraphiteFrame;
@@ -31,6 +31,7 @@ namespace Ui {
 class VerticalLayout;
 class VerticalLayoutReorder;
 enum class FilterIcon : uchar;
+struct FilterTitleIcon;
 enum class ChatsFiltersTabsMode;
 class PopupMenu;
 template <typename Widget>
@@ -63,14 +64,14 @@ private:
 	[[nodiscard]] bool premium() const;
 	[[nodiscard]] Ui::ChatsFiltersTabsMode tabsMode() const;
 	[[nodiscard]] const style::SideBarButton &buttonStyle() const;
-	[[nodiscard]] base::unique_qptr<Ui::SideBarButton> prepareAll();
 	[[nodiscard]] base::unique_qptr<Ui::SideBarButton> prepareButton(
 		not_null<Ui::VerticalLayout*> container,
 		FilterId id,
 		Data::ChatFilterTitle title,
 		Ui::FilterIcon icon,
 		bool locked = false,
-		bool toBeginning = false);
+		bool toBeginning = false,
+		const Ui::FilterTitleIcon *titleIcon = nullptr);
 	void setupMainMenuIcon();
 	void showMenu(QPoint position, FilterId id);
 	void scrollToButton(not_null<Ui::RpWidget*> widget);
@@ -111,6 +112,7 @@ private:
 	int _reordering = 0;
 	bool _ignoreRefresh = false;
 	bool _waitingSuggested = false;
+	rpl::lifetime _titleIconsLifetime;
 
 	Api::RemoveComplexChatFilter _removeApi;
 

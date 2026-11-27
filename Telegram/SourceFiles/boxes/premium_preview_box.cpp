@@ -7,47 +7,52 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/premium_preview_box.h"
 
-#include "chat_helpers/stickers_lottie.h"
+#include "api/api_premium.h"
+#include "apiwrap.h"
 #include "chat_helpers/stickers_emoji_pack.h"
-#include "data/data_file_origin.h"
+#include "chat_helpers/stickers_lottie.h"
 #include "data/data_document.h"
-#include "data/data_session.h"
 #include "data/data_document_media.h"
-#include "data/data_streaming.h"
+#include "data/data_file_origin.h"
 #include "data/data_peer_values.h"
 #include "data/data_premium_limits.h"
+#include "data/data_session.h"
+#include "data/data_streaming.h"
+#include "history/view/media/history_view_sticker.h"
+#include "history/view/history_view_element.h"
 #include "info/profile/info_profile_icon.h"
 #include "lang/lang_keys.h"
-#include "main/main_session.h"
+#include "lottie/lottie_single_player.h"
 #include "main/main_domain.h" // kMaxAccounts
-#include "ui/chat/chat_theme.h"
+#include "main/main_session.h"
+#include "media/streaming/media_streaming_instance.h"
+#include "media/streaming/media_streaming_player.h"
+#include "settings/sections/settings_business.h"
+#include "settings/sections/settings_premium.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/chat/chat_style.h"
+#include "ui/chat/chat_theme.h"
 #include "ui/controls/feature_list.h"
-#include "ui/layers/generic_box.h"
+#include "ui/effects/gradient.h"
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/effects/premium_graphics.h"
-#include "ui/effects/gradient.h"
+#include "ui/effects/premium_promo_particles.h"
+#include "ui/layers/generic_box.h"
 #include "ui/text/text.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/gradient_round_button.h"
 #include "ui/wrap/padding_wrap.h"
-#include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
+#include "ui/rect.h"
 #include "ui/vertical_list.h"
-#include "settings/sections/settings_business.h"
-#include "settings/sections/settings_premium.h"
-#include "lottie/lottie_single_player.h"
-#include "history/view/media/history_view_sticker.h"
-#include "history/view/history_view_element.h"
-#include "media/streaming/media_streaming_instance.h"
-#include "media/streaming/media_streaming_player.h"
 #include "window/window_session_controller.h"
-#include "api/api_premium.h"
-#include "apiwrap.h"
+
+#include "styles/style_calls.h"
 #include "styles/style_credits.h" // upgradeGiftSubtext
 #include "styles/style_info.h" // infoStarsUnderstood
 #include "styles/style_layers.h"
+#include "styles/style_media_view.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_premium.h"
 #include "styles/style_settings.h"
@@ -71,6 +76,7 @@ struct Descriptor {
 	Fn<void()> hiddenCallback;
 	Fn<void(not_null<Ui::BoxContent*>)> shownCallback;
 	bool hideSubscriptionButton = false;
+	bool dark = false;
 };
 
 bool operator==(const Descriptor &a, const Descriptor &b) {
@@ -591,6 +597,26 @@ struct VideoPreviewDocument {
 	return (i != end(videos)) ? i->second.get() : nullptr;
 }
 
+[[nodiscard]] Ui::Premium::PromoParticles SectionParticles(
+		PremiumFeature section) {
+	using Particles = Ui::Premium::PromoParticles;
+	switch (section) {
+	case PremiumFeature::MoreUpload: return Particles::Matrix;
+	case PremiumFeature::FasterDownload: return Particles::SpeedLines;
+	case PremiumFeature::RealTimeTranslation: return Particles::Hello;
+	case PremiumFeature::AdvancedChatManagement:
+		return Particles::ChatManagement;
+	case PremiumFeature::AnimatedEmoji:
+	case PremiumFeature::InfiniteReactions: return Particles::Emoji;
+	case PremiumFeature::NoAds: return Particles::Ads;
+	case PremiumFeature::AnimatedUserpics: return Particles::Userpics;
+	case PremiumFeature::TagsForMessages: return Particles::Tags;
+	case PremiumFeature::RichFormatting: return Particles::Formatting;
+	case PremiumFeature::ProfileBadge: return Particles::ProfileBadge;
+	}
+	return Particles::Stars;
+}
+
 [[nodiscard]] QPainterPath GenerateFrame(
 		int left,
 		int top,
@@ -648,6 +674,8 @@ struct VideoPreviewDocument {
 		std::shared_ptr<ChatHelpers::Show> show,
 		not_null<DocumentData*> document,
 		bool alignToBottom,
+		not_null<Ui::Premium::PromoParticlesPainter*> particles,
+		Fn<void(QRect)> deviceCallback,
 		Fn<void()> readyCallback) {
 	const auto result = Ui::CreateChild<Ui::RpWidget>(parent.get());
 	result->show();
@@ -708,6 +736,7 @@ struct VideoPreviewDocument {
 	const auto left = (st::boxWideWidth - width) / 2;
 	const auto top = alignToBottom ? (st::premiumPreviewHeight - height) : 0;
 	state->frame = GenerateFrame(left, top, width, height, alignToBottom);
+	deviceCallback(QRect(left, top, width, height));
 	const auto check = [=] {
 		if (state->instance.playerLocked()) {
 			return;
@@ -779,6 +808,12 @@ struct VideoPreviewDocument {
 		paintFrame(Qt::black, 6.6);
 		if (ready) {
 			state->loading.stop();
+			const auto &track = state->instance.info().video.state;
+			if (track.duration > 0
+				&& track.position != Media::kTimeUnknown) {
+				particles->setVideoProgress(
+					track.position / float64(track.duration));
+			}
 			state->instance.markFrameShown();
 		} else {
 			if (!state->loading.animating()) {
@@ -823,9 +858,30 @@ struct VideoPreviewDocument {
 	struct State {
 		std::vector<std::shared_ptr<Data::DocumentMedia>> medias;
 		Ui::RpWidget *single = nullptr;
+		std::unique_ptr<Ui::Premium::PromoParticlesPainter> particles;
+		Ui::Animations::Basic particlesAnimation;
 	};
 	const auto session = &show->session();
 	const auto state = lifetime.make_state<State>();
+	const auto alignToTop = VideoAlignToTop(section);
+	const auto outer = Rect(
+		QSize(st::boxWideWidth, st::premiumPreviewHeight));
+	state->particles = Ui::Premium::MakePromoParticles(
+		SectionParticles(section));
+
+	const auto placeholder = st::premiumVideoWidth;
+	state->particles->setGeometry(outer, Rect(
+		(outer.width() - placeholder) / 2,
+		alignToTop ? 0 : (outer.height() - placeholder),
+		Size(placeholder)));
+	state->particlesAnimation.init([=] { result->update(); });
+	if (!anim::Disabled()) {
+		state->particlesAnimation.start();
+	}
+	result->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(result);
+		state->particles->paint(p);
+	}, lifetime);
 	const auto create = [=] {
 		const auto document = LookupVideo(session, section);
 		if (!document) {
@@ -835,7 +891,9 @@ struct VideoPreviewDocument {
 			result,
 			show,
 			document,
-			!VideoAlignToTop(section),
+			!alignToTop,
+			state->particles.get(),
+			[=](QRect device) { state->particles->setGeometry(outer, device); },
 			readyCallback);
 	};
 	create();
@@ -885,7 +943,7 @@ struct VideoPreviewDocument {
 	const auto stops = Ui::Premium::ButtonGradientStops();
 	auto result = object_ptr<Ui::FixedHeightWidget>(parent.get(), height);
 	const auto raw = result.data();
-	const auto count = order.size();
+	const auto count = int(order.size());
 	for (auto i = 0; i != count; ++i) {
 		const auto section = order[i];
 		const auto button = Ui::CreateChild<Ui::AbstractButton>(raw);
@@ -1272,6 +1330,15 @@ void Show(
 	}
 }
 
+void RemoveExpiredPreloads() {
+	auto &list = Preloads();
+	list.erase(
+		ranges::remove_if(list, [](const Preload &preload) {
+			return preload.show.expired();
+		}),
+		end(list));
+}
+
 void Show(std::shared_ptr<ChatHelpers::Show> show, QImage back) {
 	auto &list = Preloads();
 	for (auto i = begin(list); i != end(list);) {
@@ -1293,10 +1360,19 @@ void DecorateListPromoBox(
 		std::shared_ptr<ChatHelpers::Show> show,
 		const Descriptor &descriptor) {
 	const auto session = &show->session();
+	const auto subscribe = !session->premium()
+		&& !descriptor.hideSubscriptionButton;
+	const auto &boxStyle = descriptor.dark
+		? st::storiesPremiumPreviewBox
+		: st::premiumPreviewDoubledLimitsBox;
+	if (descriptor.dark || subscribe) {
+		box->setStyle(boxStyle);
+	}
 
-	box->addTopButton(st::boxTitleClose, [=] {
-		box->closeBox();
-	});
+	const auto &closeStyle = descriptor.dark
+		? st::storiesStealthBoxClose
+		: st::boxTitleClose;
+	box->addTopButton(closeStyle, [=] { box->closeBox(); });
 
 	if (!descriptor.hideSubscriptionButton) {
 		Data::AmPremiumValue(
@@ -1310,7 +1386,7 @@ void DecorateListPromoBox(
 		box->boxClosing() | rpl::on_next(hidden, box->lifetime());
 	}
 
-	if (session->premium() || descriptor.hideSubscriptionButton) {
+	if (!subscribe) {
 		box->addButton(tr::lng_close(), [=] {
 			box->closeBox();
 		});
@@ -1325,11 +1401,9 @@ void DecorateListPromoBox(
 			button->startGlareAnimation();
 		});
 
-		box->setStyle(st::premiumPreviewDoubledLimitsBox);
+		const auto padding = boxStyle.buttonPadding;
 		box->widthValue(
 		) | rpl::on_next([=](int width) {
-			const auto &padding
-				= st::premiumPreviewDoubledLimitsBox.buttonPadding;
 			button->resizeToWidth(width
 				- padding.left()
 				- padding.right());
@@ -1359,7 +1433,10 @@ void Show(
 		return;
 	} else if (descriptor.section == PremiumFeature::Stories) {
 		show->showBox(Box([=](not_null<Ui::GenericBox*> box) {
-			UpgradedStoriesPreviewBox(box, &show->session());
+			UpgradedStoriesPreviewBox(
+				box,
+				&show->session(),
+				descriptor.dark);
 			DecorateListPromoBox(box, show, descriptor);
 		}));
 		return;
@@ -1425,6 +1502,8 @@ void Show(
 		crl::on_main([=] {
 			if (auto strong = weak.lock()) {
 				Show(std::move(strong), result);
+			} else {
+				RemoveExpiredPreloads();
 			}
 		});
 	});
@@ -1458,6 +1537,17 @@ void ShowPremiumPreviewBox(
 		.shownCallback = std::move(shown),
 		.hideSubscriptionButton = hideSubscriptionButton,
 	});
+}
+
+void ShowStoriesPremiumPreviewBox(
+		std::shared_ptr<ChatHelpers::Show> show,
+		bool dark) {
+	Show(
+		std::move(show),
+		Descriptor{
+			.section = PremiumFeature::Stories,
+			.dark = dark,
+		});
 }
 
 void ShowPremiumPreviewToBuy(
@@ -1627,6 +1717,9 @@ void DoubledLimitsPreviewBox(
 			premium,
 		});
 	}
+	entries.erase(ranges::remove_if(entries, [](const auto &entry) {
+		return (entry.leftNumber >= entry.rightNumber);
+	}), end(entries));
 	Ui::Premium::ShowListBox(
 		box,
 		st::defaultPremiumLimits,
@@ -1635,7 +1728,8 @@ void DoubledLimitsPreviewBox(
 
 void UpgradedStoriesPreviewBox(
 		not_null<Ui::GenericBox*> box,
-		not_null<Main::Session*> session) {
+		not_null<Main::Session*> session,
+		bool dark) {
 	using namespace Ui::Text;
 
 	box->setTitle(tr::lng_premium_summary_subtitle_stories());
@@ -1677,14 +1771,16 @@ void UpgradedStoriesPreviewBox(
 		.icon = &st::settingsStoriesIconLinks,
 	});
 
-	Ui::Premium::ShowListBox(
-		box,
-		st::defaultPremiumLimits,
-		std::move(entries));
+	const auto &listStyle = dark
+		? st::storiesPremiumPreviewLimits
+		: st::defaultPremiumLimits;
+	Ui::Premium::ShowListBox(box, listStyle, std::move(entries));
 
 	Ui::AddDividerText(
 		box->verticalLayout(),
-		tr::lng_premium_stories_about_mobile());
+		tr::lng_premium_stories_about_mobile(),
+		st::defaultBoxDividerLabelPadding,
+		dark ? st::groupCallDividerLabel : st::defaultDividerLabel);
 }
 
 void TelegramBusinessPreviewBox(

@@ -7,67 +7,70 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "settings/sections/settings_information.h"
 
-#include "settings/sections/settings_main.h"
-#include "settings/settings_builder.h"
-#include "settings/settings_common_session.h"
-#include "settings/business/settings_chatbots.h"
-#include "ui/wrap/vertical_layout.h"
-#include "ui/wrap/vertical_layout_reorder.h"
-#include "ui/wrap/padding_wrap.h"
-#include "ui/wrap/slide_wrap.h"
-#include "ui/widgets/labels.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/popup_menu.h"
-#include "ui/widgets/box_content_divider.h"
-#include "ui/widgets/menu/menu_add_action_callback_factory.h"
-#include "ui/boxes/confirm_box.h"
-#include "ui/controls/userpic_button.h"
-#include "ui/new_badges.h"
-#include "ui/text/text_utilities.h"
-#include "ui/delayed_activation.h"
-#include "ui/painter.h"
-#include "ui/vertical_list.h"
-#include "ui/unread_badge_paint.h"
-#include "ui/ui_utility.h"
-#include "core/application.h"
-#include "core/click_handler_types.h"
-#include "core/core_settings.h"
-#include "chat_helpers/emoji_suggestions_widget.h"
-#include "boxes/add_contact_box.h"
-#include "boxes/premium_limits_box.h"
-#include "boxes/username_box.h"
-#include "boxes/peers/edit_peer_color_box.h"
-#include "data/business/data_business_chatbots.h"
-#include "data/data_session.h"
-#include "data/data_user.h"
-#include "data/data_peer_values.h"
-#include "data/data_changes.h"
-#include "data/data_channel.h"
-#include "data/data_premium_limits.h"
-#include "info/profile/info_profile_values.h"
-#include "info/profile/info_profile_badge.h"
-#include "info/profile/info_profile_phone_menu.h"
-#include "lang/lang_keys.h"
-#include "main/main_account.h"
-#include "main/main_session.h"
-#include "main/main_domain.h"
-#include "mtproto/mtproto_dc_options.h"
-#include "window/window_session_controller.h"
-#include "window/window_controller.h"
-#include "window/window_peer_menu.h"
-#include "apiwrap.h"
 #include "api/api_peer_photo.h"
 #include "api/api_user_names.h"
 #include "api/api_user_privacy.h"
+#include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "base/options.h"
-#include "base/unixtime.h"
 #include "base/random.h"
+#include "base/unixtime.h"
+#include "boxes/peers/edit_peer_color_box.h"
+#include "boxes/add_contact_box.h"
+#include "boxes/premium_limits_box.h"
+#include "boxes/username_box.h"
+#include "chat_helpers/emoji_suggestions_widget.h"
+#include "core/application.h"
+#include "core/click_handler_types.h"
+#include "core/core_settings.h"
+#include "data/business/data_business_chatbots.h"
+#include "data/data_changes.h"
+#include "data/data_channel.h"
+#include "data/data_peer_values.h"
+#include "data/data_premium_limits.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
+#include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_phone_menu.h"
+#include "info/profile/info_profile_values.h"
+#include "lang/lang_keys.h"
+#include "main/main_account.h"
+#include "main/main_domain.h"
+#include "main/main_session.h"
+#include "menu/menu_mark_as_read.h"
+#include "mtproto/mtproto_dc_options.h"
+#include "settings/business/settings_chatbots.h"
+#include "settings/sections/settings_main.h"
+#include "settings/settings_builder.h"
+#include "settings/settings_common_session.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/controls/button_context_menu.h"
+#include "ui/controls/userpic_button.h"
+#include "ui/text/text_utilities.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/box_content_divider.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/wrap/padding_wrap.h"
+#include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/vertical_layout_reorder.h"
+#include "ui/delayed_activation.h"
+#include "ui/new_badges.h"
+#include "ui/painter.h"
+#include "ui/ui_utility.h"
+#include "ui/unread_badge_paint.h"
+#include "ui/vertical_list.h"
+#include "window/window_controller.h"
+#include "window/window_logout_box.h"
+#include "window/window_peer_menu.h"
+#include "window/window_session_controller.h"
+
 #include "styles/style_chat.h" // popupMenuExpandedSeparator
-#include "styles/style_layers.h"
-#include "styles/style_settings.h"
 #include "styles/style_menu_icons.h"
+#include "styles/style_settings.h"
 #include "styles/style_window.h"
 
 #include <QtGui/QGuiApplication>
@@ -156,7 +159,7 @@ ComposedBadge::ComposedBadge(
 		) | rpl::then(
 			session->data().unreadBadgeChanges()
 		) | rpl::map([=] {
-			auto &owner = session->data();
+			const auto &owner = session->data();
 			return Badge::UnreadBadge{
 				owner.unreadWithMentionsBadge(),
 				owner.unreadWithMentionsBadgeMuted(),
@@ -325,6 +328,7 @@ void SetupPhoto(
 		targets->uploadPhoto = upload;
 	}
 
+	upload->setVideoAllowed(true);
 	upload->chosenImages(
 	) | rpl::on_next([=](Ui::UserpicButton::ChosenImage &&chosen) {
 		auto &image = chosen.image;
@@ -334,9 +338,10 @@ void SetupPhoto(
 		self->session().api().peerPhoto().upload(
 			self,
 			{
-				std::move(image),
-				chosen.markup.documentId,
-				chosen.markup.colors,
+				.image = std::move(image),
+				.markupDocumentId = chosen.markup.documentId,
+				.markupColors = chosen.markup.colors,
+				.video = std::move(chosen.video),
 			});
 		if (!isMarkup) {
 			photo->showUploadProgress();
@@ -547,31 +552,7 @@ void SetupChatAutomation(
 		controller->showSettings(Settings::ChatbotsId());
 	});
 
-	{
-		const auto badge = Ui::NewBadge::CreateNewBadge(
-			button,
-			tr::lng_premium_summary_new_badge()).get();
-		rpl::combine(
-			std::move(title),
-			button->widthValue()
-		) | rpl::on_next([=, &st](
-				const QString &text,
-				int width) {
-			const auto space = st.style.font->spacew;
-			const auto left = st.padding.left()
-				+ st.style.font->width(text)
-				+ space;
-			const auto available = width - left - st.padding.right();
-			badge->setVisible(available >= badge->width());
-			if (!badge->isHidden()) {
-				const auto top = st.padding.top()
-					+ st.style.font->ascent
-					- st::settingsPremiumNewBadge.style.font->ascent
-					- st::settingsPremiumNewBadgePadding.top();
-				badge->moveToLeft(left, top, width);
-			}
-		}, badge->lifetime());
-	}
+	Ui::NewBadge::AddAfterButtonText(button, std::move(title), st);
 
 	if (targets) {
 		targets->chatAutomation = button;
@@ -908,7 +889,6 @@ void SetupAccountsWrap(
 
 		Ui::RpWidget userpic;
 		Ui::PeerUserpicView view;
-		base::unique_qptr<Ui::PopupMenu> menu;
 	};
 	const auto state = raw->lifetime().make_state<State>(raw);
 
@@ -949,22 +929,15 @@ void SetupAccountsWrap(
 	) | rpl::on_next([=](Qt::MouseButton which) {
 		if (which == Qt::LeftButton) {
 			callback(raw->clickModifiers());
-			return;
 		} else if (which == Qt::MiddleButton) {
 			callback(Qt::ControlModifier);
-			return;
-		} else if (which != Qt::RightButton) {
-			return;
 		}
-		if (state->menu) {
-			return;
-		}
+	}, raw->lifetime());
+
+	Ui::SetupButtonContextMenu(raw, &st::popupMenuExpandedSeparator, [=](
+			not_null<Ui::PopupMenu*> menu) {
 		const auto isActive = session == &window->session();
-		state->menu = base::make_unique_q<Ui::PopupMenu>(
-			raw,
-			st::popupMenuExpandedSeparator);
-		const auto addAction = Ui::Menu::CreateAddActionCallback(
-			state->menu);
+		const auto addAction = Ui::Menu::CreateAddActionCallback(menu);
 		if (!isActive) {
 			addAction(tr::lng_context_new_window(tr::now), [=] {
 				Ui::PreventDelayedActivation();
@@ -984,27 +957,16 @@ void SetupAccountsWrap(
 					callback({});
 				}, &st::menuIconProfile);
 			}
-			Window::MenuAddMarkAsReadAllChatsAction(
+			MarkAsReadMenu::AddAllChatsAction(
 				session,
 				window->uiShow(),
 				addAction);
 		}
 
 		if (!isActive) {
-			auto logoutCallback = [=] {
-				const auto callback = [=](Fn<void()> &&close) {
-					close();
-					Core::App().logoutWithChecks(&session->account());
-				};
-				window->show(
-					Ui::MakeConfirmBox({
-						.text = tr::lng_sure_logout(),
-						.confirmed = crl::guard(session, callback),
-						.confirmText = tr::lng_settings_logout(),
-						.confirmStyle = &st::attentionBoxButton,
-					}),
-					Ui::LayerOption::CloseOther);
-			};
+			auto logoutCallback = crl::guard(session, [=] {
+				Window::ShowLogoutOptions(&window->window(), session);
+			});
 			addAction({
 				.text = tr::lng_settings_logout(tr::now),
 				.handler = std::move(logoutCallback),
@@ -1012,8 +974,7 @@ void SetupAccountsWrap(
 				.isAttention = true,
 			});
 		}
-		state->menu->popup(QCursor::pos());
-	}, raw->lifetime());
+	});
 
 	return result;
 }

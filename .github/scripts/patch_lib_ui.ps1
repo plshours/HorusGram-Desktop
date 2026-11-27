@@ -88,58 +88,6 @@ Edit-Text `
 			New = "`tradius: 14px;`n`tduration: 150;`n";
 		})
 
-# The main window is drawn on the GPU through Qt RHI (Direct3D 11) on Windows
-# x64 too, as Telegram itself does now. The pinned lib_ui kept it to ARM64,
-# so x64 drew the whole window on the CPU and scrolled at a low frame rate.
-# A failed start still falls back to the old renderer through the crash check.
-Edit-Text `
-	(Join-Path $WorkspaceRoot 'Telegram/lib_ui/ui/gl/gl_detection.cpp') `
-	'HoursGram: RHI on every Windows' `
-	@(
-		@{
-			Old = "`t.scope = [] {`n`t`treturn (!Platform::IsWindows() || Platform::IsWindowsARM64())`n`t`t`t&& QLibraryInfo::version() >= QVersionNumber(6, 7);`n`t},`n";
-			New = "`t.scope = [] {`n`t`t// HoursGram: RHI on every Windows, x64 included.`n`t`treturn QLibraryInfo::version() >= QVersionNumber(6, 7);`n`t},`n";
-		})
-
-# The swap chain of that renderer goes through DirectComposition, which
-# composites it only when it has alpha. Telegram added this together with
-# turning RHI on for Windows x64.
-Edit-Text `
-	(Join-Path $WorkspaceRoot 'Telegram/lib_ui/ui/rp_widget.cpp') `
-	'DirectComposition composites swap chain only with alpha' `
-	@(
-		@{
-			Old = "`t`tformat.setSwapInterval(::Platform::MetalSupported() ? 1 : 0);`n#ifdef DESKTOP_APP_USE_ANGLE`n";
-			New = "`t`tformat.setSwapInterval(::Platform::MetalSupported() ? 1 : 0);`n#ifdef Q_OS_WIN`n`t`t// DirectComposition composites swap chain only with alpha in it.`n`t`tformat.setAlphaBufferSize(8);`n#endif // Q_OS_WIN`n#ifdef DESKTOP_APP_USE_ANGLE`n";
-		})
-
-# Emoji statuses and custom emoji are drawn by FrameGenerator, which took the
-# size and the frame count an animation states on trust. A broken or hostile
-# one made rlottie throw std::length_error on its render thread while the chat
-# list scrolled, and the uncaught exception closed the client. The sticker
-# path's bounds apply here as well, as upstream lib_lottie does now, and what
-# rlottie still throws stays on the frame instead of ending the process.
-Edit-Text `
-	(Join-Path $WorkspaceRoot 'Telegram/lib_lottie/lottie/lottie_frame_generator.cpp') `
-	'HoursGram: bounded FrameGenerator' `
-	@(
-		@{
-			Old = "#include `"lottie/lottie_common.h`"`n#include `"lottie/lottie_wrap.h`"`n";
-			New = "#include `"lottie/details/lottie_frame_renderer.h`"`n#include `"lottie/lottie_common.h`"`n#include `"lottie/lottie_wrap.h`"`n";
-		},
-		@{
-			Old = "`tif (!_framesCount || !_frameDuration || _size.isEmpty()) {`n";
-			New = "`t// HoursGram: bounded FrameGenerator, as the sticker path is.`n`tif (!_framesCount`n`t`t|| _framesCount > kMaxFramesCount`n`t`t|| !_frameDuration`n`t`t|| _size.isEmpty()`n`t`t|| _size.width() > kMaxSize`n`t`t|| _size.height() > kMaxSize) {`n";
-		},
-		@{
-			Old = "#include `"ui/image/image_prepare.h`"`n";
-			New = "#include `"ui/image/image_prepare.h`"`n`n#include <QtGui/QPainter>`n";
-		},
-		@{
-			Old = "`tconst auto scaled = _size.scaled(size, mode);`n`tconst auto render = QSize(`n`t`tstd::max(scaled.width(), size.width()),`n`t`tstd::max(scaled.height(), size.height()));`n`tconst auto xskip = (size.width() - render.width()) / 2;`n`tconst auto yskip = (size.height() - render.height());`n`tconst auto skip = (yskip * storage.bytesPerLine() / 4) + xskip;`n`tauto surface = rlottie::Surface(`n`t`treinterpret_cast<uint32_t*>(storage.bits()) + skip,`n`t`trender.width(),`n`t`trender.height(),`n`t`tstorage.bytesPerLine());`n`t_rlottie->renderSync(index * _multiplier, std::move(surface));`n";
-			New = "`tauto scaled = _size.scaled(size, mode);`n`tif (scaled.width() > kMaxSize || scaled.height() > kMaxSize) {`n`t`t// An extreme aspect ratio expanded to cover the box would need a`n`t`t// surface far larger than any frame, so it is fitted instead.`n`t`tscaled = _size.scaled(size, Qt::KeepAspectRatio);`n`t}`n`tconst auto render = QSize(`n`t`tstd::max(scaled.width(), size.width()),`n`t`tstd::max(scaled.height(), size.height()));`n`tconst auto draw = [&](QImage &into) {`n`t`tauto surface = rlottie::Surface(`n`t`t`treinterpret_cast<uint32_t*>(into.bits()),`n`t`t`trender.width(),`n`t`t`trender.height(),`n`t`t`tinto.bytesPerLine());`n`t`ttry {`n`t`t`t_rlottie->renderSync(index * _multiplier, std::move(surface));`n`t`t} catch (const std::exception &) {`n`t`t`tinto.fill(Qt::transparent);`n`t`t}`n`t};`n`tif (render == size) {`n`t`tdraw(storage);`n`t} else {`n`t`t// Larger than the box: the surface used to start before the storage`n`t`t// and run past it, so rlottie wrote outside of the image. The frame`n`t`t// is rendered whole and cropped instead, as upstream does now.`n`t`tauto expanded = CreateFrameStorage(render);`n`t`texpanded.fill(Qt::transparent);`n`t`tdraw(expanded);`n`t`tauto p = QPainter(&storage);`n`t`tp.setCompositionMode(QPainter::CompositionMode_Source);`n`t`tp.drawImage(`n`t`t`tQPoint(`n`t`t`t`t(size.width() - render.width()) / 2,`n`t`t`t`tsize.height() - render.height()),`n`t`t`texpanded);`n`t}`n";
-		})
-
 # HorusGram Graphite: a light top edge under the cursor for buttons and a
 # ring that main buttons keep. Only drawn while Ui::HoursGramGraphite() is on.
 Edit-Text `
@@ -172,7 +120,7 @@ Edit-Text `
 			New = "namespace Ui {`n`n// HorusGram: while the Graphite theme is on, buttons are drawn with the`n// edges and rings of HORUSGRAM_DESIGN.md.`nvoid SetHoursGramGraphite(bool enabled);`n[[nodiscard]] bool HoursGramGraphite();`n`nclass RippleAnimation;`n";
 		})
 
-Write-Output 'Applied HoursGram fonts, rounded hover states, the Graphite button edges, the GPU renderer and the Lottie bounds to the pinned libraries.'
+Write-Output 'Applied HoursGram fonts, rounded hover states and the Graphite button edges to the pinned libraries.'
 
 # HorusGram Graphite: settings rows and side bar buttons animate under the
 # cursor: the pill and its edge fade in, side bar icons spring up.
@@ -207,8 +155,8 @@ Edit-Text `
 			New = "#include `"ui/effects/ripple_animation.h`"`n#include `"styles/palette.h`"`n";
 		},
 		@{
-			Old = "`tRippleButton::paintRipple(p, 0, 0);`n`n`tif (_lock.locked) {`n`t`tp.setOpacity(kPremiumLockedOpacity);`n`t}`n`n`tif (_showIcon) {`n`t`tconst auto &icon = computeIcon();`n`t`tconst auto x = iconLeft();`n`t`tconst auto y = iconTop();`n";
-			New = "`tauto hoursgramLift = 0;`n`tif (HoursGramGraphite()) {`n`t`t// A pill with a light top edge fades in under the cursor and the`n`t`t// icon springs up a little; the active folder keeps the pill.`n`t`tconst auto value = _hoursgramOver.value(isOver() ? 1. : 0.);`n`t`tconst auto shown = _active ? 1. : std::clamp(value, 0., 1.);`n`t`tif (shown > 0.) {`n`t`t`tauto hq = PainterHighQualityEnabler(p);`n`t`t`tconst auto side = float64(style::ConvertScale(7));`n`t`t`tconst auto top = float64(style::ConvertScale(2));`n`t`t`tconst auto pill = QRectF(rect()).marginsRemoved(`n`t`t`t`t{ side, top, side, top });`n`t`t`tconst auto radius = std::min(`n`t`t`t`tfloat64(style::ConvertScale(16)),`n`t`t`t`tpill.height() / 2.);`n`t`t`tconst auto line = style::ConvertScaleExact(1.5);`n`t`t`tconst auto half = line / 2.;`n`t`t`tconst auto inner = pill.marginsRemoved({ half, half, half, half });`n`t`t`tp.save();`n`t`t`tp.setOpacity(shown);`n`t`t`tp.setPen(Qt::NoPen);`n`t`t`tp.setBrush(st::windowBgOver);`n`t`t`tp.drawRoundedRect(pill, radius, radius);`n`t`t`tp.setBrush(Qt::NoBrush);`n`t`t`tp.setPen(QPen(st::windowBgRipple->c, line));`n`t`t`tp.drawRoundedRect(inner, radius - half, radius - half);`n`t`t`tp.setClipRect(`n`t`t`t`tQRectF(pill.x(), pill.y(), pill.width(), pill.height() * 0.4),`n`t`t`t`tQt::IntersectClip);`n`t`t`tp.setPen(QPen(st::windowSubTextFg->c, line));`n`t`t`tp.drawRoundedRect(inner, radius - half, radius - half);`n`t`t`tp.restore();`n`t`t}`n`t`tif (!_active) {`n`t`t`thoursgramLift = -int(std::round(style::ConvertScale(2) * value));`n`t`t}`n`t}`n`n`tRippleButton::paintRipple(p, 0, 0);`n`n`tif (_lock.locked) {`n`t`tp.setOpacity(kPremiumLockedOpacity);`n`t}`n`n`tif (_showIcon) {`n`t`tconst auto &icon = computeIcon();`n`t`tconst auto x = iconLeft();`n`t`tconst auto y = iconTop() + hoursgramLift;`n";
+			Old = "`tRippleButton::paintRipple(p, 0, 0);`n`n`tif (_lock.locked) {`n`t`tp.setOpacity(kPremiumLockedOpacity);`n`t}`n`n`tif (_showIcon) {`n`t`tconst auto x = iconLeft();`n`t`tconst auto y = iconTop();`n";
+			New = "`tauto hoursgramLift = 0;`n`tif (HoursGramGraphite()) {`n`t`t// A pill with a light top edge fades in under the cursor and the`n`t`t// icon springs up a little; the active folder keeps the pill.`n`t`tconst auto value = _hoursgramOver.value(isOver() ? 1. : 0.);`n`t`tconst auto shown = _active ? 1. : std::clamp(value, 0., 1.);`n`t`tif (shown > 0.) {`n`t`t`tauto hq = PainterHighQualityEnabler(p);`n`t`t`tconst auto side = float64(style::ConvertScale(7));`n`t`t`tconst auto top = float64(style::ConvertScale(2));`n`t`t`tconst auto pill = QRectF(rect()).marginsRemoved(`n`t`t`t`t{ side, top, side, top });`n`t`t`tconst auto radius = std::min(`n`t`t`t`tfloat64(style::ConvertScale(16)),`n`t`t`t`tpill.height() / 2.);`n`t`t`tconst auto line = style::ConvertScaleExact(1.5);`n`t`t`tconst auto half = line / 2.;`n`t`t`tconst auto inner = pill.marginsRemoved({ half, half, half, half });`n`t`t`tp.save();`n`t`t`tp.setOpacity(shown);`n`t`t`tp.setPen(Qt::NoPen);`n`t`t`tp.setBrush(st::windowBgOver);`n`t`t`tp.drawRoundedRect(pill, radius, radius);`n`t`t`tp.setBrush(Qt::NoBrush);`n`t`t`tp.setPen(QPen(st::windowBgRipple->c, line));`n`t`t`tp.drawRoundedRect(inner, radius - half, radius - half);`n`t`t`tp.setClipRect(`n`t`t`t`tQRectF(pill.x(), pill.y(), pill.width(), pill.height() * 0.4),`n`t`t`t`tQt::IntersectClip);`n`t`t`tp.setPen(QPen(st::windowSubTextFg->c, line));`n`t`t`tp.drawRoundedRect(inner, radius - half, radius - half);`n`t`t`tp.restore();`n`t`t}`n`t`tif (!_active) {`n`t`t`thoursgramLift = -int(std::round(style::ConvertScale(2) * value));`n`t`t}`n`t}`n`n`tRippleButton::paintRipple(p, 0, 0);`n`n`tif (_lock.locked) {`n`t`tp.setOpacity(kPremiumLockedOpacity);`n`t}`n`n`tif (_showIcon) {`n`t`tconst auto x = iconLeft();`n`t`tconst auto y = iconTop() + hoursgramLift;`n";
 		},
 		@{
 			Old = "const style::icon &SideBarButton::computeIcon() const {`n";
@@ -299,8 +247,8 @@ Edit-Text `
 			New = "#include <QtGui/QtEvents>`n#include <QtGui/QPainterPath>`n";
 		},
 		@{
-			Old = "`t_active = active;`n`tif (isListItem()) {`n";
-			New = "`t_active = active;`n`tif (HoursGramGraphite()) {`n`t`t_hoursgramActive.start(`n`t`t`t[=] { update(); },`n`t`t`t_hoursgramActive.value(active ? 0. : 1.),`n`t`t`tactive ? 1. : 0.,`n`t`t`t220,`n`t`t`tanim::easeOutCirc);`n`t}`n`tif (isListItem()) {`n";
+			Old = "`t_active = active;`n`tif (isPageTab()) {`n";
+			New = "`t_active = active;`n`tif (HoursGramGraphite()) {`n`t`t_hoursgramActive.start(`n`t`t`t[=] { update(); },`n`t`t`t_hoursgramActive.value(active ? 0. : 1.),`n`t`t`tactive ? 1. : 0.,`n`t`t`t220,`n`t`t`tanim::easeOutCirc);`n`t}`n`tif (isPageTab()) {`n";
 		},
 		@{
 			Old = "`tauto hoursgramLift = 0;`n";
@@ -323,8 +271,8 @@ Edit-Text `
 			New = "`t`tconst auto y = iconTop();`n`t`tif (hoursgramLift != 0.) {`n`t`t`tp.translate(0., hoursgramLift);`n`t`t}`n";
 		},
 		@{
-			Old = "`t`t`ticon.paint(p, x, y, width());`n`t`t}`n`t}`n";
-			New = "`t`t`ticon.paint(p, x, y, width());`n`t`t}`n`t`tif (hoursgramLift != 0.) {`n`t`t`tp.translate(0., -hoursgramLift);`n`t`t}`n`t}`n";
+			Old = "`t`t`tpaintIcon(p, QPoint(x, y), width());`n`t`t}`n`t}`n";
+			New = "`t`t`tpaintIcon(p, QPoint(x, y), width());`n`t`t}`n`t`tif (hoursgramLift != 0.) {`n`t`t`tp.translate(0., -hoursgramLift);`n`t`t}`n`t}`n";
 		},
 		@{
 			Old = "`t`t_hoursgramOver.start(`n`t`t`t[=] { update(); },`n`t`t`tover ? 0. : 1.,`n";
@@ -550,8 +498,12 @@ if (!$popupText.Contains('HoursGramScrollPadding')) {
 				New = "#include `"ui/widgets/shadow.h`"`n#include `"ui/widgets/buttons.h`"`n";
 			},
 			@{
-				Old = "namespace Ui {`n`nPopupMenu::PopupMenu(QWidget *parent, const style::PopupMenu &st)`n: RpWidget(parent)`n, _st(st)`n";
-				New = "namespace Ui {`nnamespace {`n`n[[nodiscard]] style::margins HoursGramScrollPadding(`n`t`tconst style::PopupMenu &st) {`n`tauto result = st.scrollPadding;`n`tif (HoursGramGraphite()) {`n`t`tconst auto least = st.radius / 2;`n`t`tresult.setTop(std::max(result.top(), least));`n`t`tresult.setBottom(std::max(result.bottom(), least));`n`t}`n`treturn result;`n}`n`n} // namespace`n`nPopupMenu::PopupMenu(QWidget *parent, const style::PopupMenu &st)`n: RpWidget(parent)`n, _st(st)`n, _hoursgramScrollPadding(HoursGramScrollPadding(st))`n";
+				Old = "} // namespace`n`nstruct PopupMenu::SubmenuAim {`n";
+				New = "[[nodiscard]] style::margins HoursGramScrollPadding(`n`t`tconst style::PopupMenu &st) {`n`tauto result = st.scrollPadding;`n`tif (HoursGramGraphite()) {`n`t`tconst auto least = st.radius / 2;`n`t`tresult.setTop(std::max(result.top(), least));`n`t`tresult.setBottom(std::max(result.bottom(), least));`n`t}`n`treturn result;`n}`n`n} // namespace`n`nstruct PopupMenu::SubmenuAim {`n";
+			},
+			@{
+				Old = "PopupMenu::PopupMenu(QWidget *parent, const style::PopupMenu &st)`n: RpWidget(parent)`n, _st(st)`n";
+				New = "PopupMenu::PopupMenu(QWidget *parent, const style::PopupMenu &st)`n: RpWidget(parent)`n, _st(st)`n, _hoursgramScrollPadding(HoursGramScrollPadding(st))`n";
 			},
 			@{
 				Old = "PopupMenu::PopupMenu(QWidget *parent, QMenu *menu, const style::PopupMenu &st)`n: RpWidget(parent)`n, _st(st)`n";

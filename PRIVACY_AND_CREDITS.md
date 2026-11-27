@@ -34,7 +34,7 @@ HoursGram распространяется по **GNU GPL версии 3** (см
 На основании пункта 7(b) GPLv3 к коду, написанному для HoursGram, действует дополнительное условие: **если вы используете этот код или его части в своём проекте, укажите, что он взят из HoursGram**. Для этого:
 
 1. Сохраните заголовки авторства в файлах, которые вы взяли.
-2. Укажите HoursGram в README, NOTICE или разделе «О программе» своего проекта, со ссылкой на репозиторий: <https://github.com/plshours/HoursGram-Desktop>.
+2. Укажите HoursGram в README, NOTICE или разделе «О программе» своего проекта, со ссылкой на репозиторий: <https://github.com/plshours/HorusGram-Desktop>.
 3. Не выдавайте код HoursGram за свой и не убирайте упоминание проекта из собранного приложения.
 
 Остальные условия GPLv3 тоже действуют: производная работа должна выходить под GPLv3, а её исходный код должен быть открыт.
@@ -48,4 +48,4 @@ HoursGram распространяется по **GNU GPL версии 3** (см
 ## In short (English)
 
 - **Privacy.** HoursGram has no telemetry, analytics or trackers. Your messages, contacts, phone number and account data go only to Telegram's servers, as with the official client. The table above lists every other server the client contacts and what it sends.
-- **Attribution.** HoursGram is GPLv3. Under section 7(b), anyone who uses code written for HoursGram must keep its author notices and credit HoursGram with a link to <https://github.com/plshours/HoursGram-Desktop>.
+- **Attribution.** HoursGram is GPLv3. Under section 7(b), anyone who uses code written for HoursGram must keep its author notices and credit HoursGram with a link to <https://github.com/plshours/HorusGram-Desktop>.

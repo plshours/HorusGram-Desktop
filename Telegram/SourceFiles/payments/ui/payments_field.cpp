@@ -7,15 +7,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "payments/ui/payments_field.h"
 
-#include "ui/widgets/fields/input_field.h"
+#include "base/platform/base_platform_info.h"
+#include "base/qt/qt_common_adapters.h"
+#include "base/event_filter.h"
+#include "countries/countries_instance.h"
 #include "ui/boxes/country_select_box.h"
 #include "ui/text/format_values.h"
-#include "ui/ui_utility.h"
+#include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/special_fields.h"
-#include "countries/countries_instance.h"
-#include "base/platform/base_platform_info.h"
-#include "base/event_filter.h"
-#include "base/qt/qt_common_adapters.h"
+#include "ui/ui_utility.h"
+
 #include "styles/style_payments.h"
 
 #include <QtCore/QRegularExpression>
@@ -258,6 +259,30 @@ struct SimpleFieldState {
 	Unexpected("FieldType in Payments::Ui::UseMaskedField.");
 }
 
+[[nodiscard]] Qt::InputMethodHints HintsForType(FieldType type) {
+	switch (type) {
+	case FieldType::Text:
+	case FieldType::Country:
+		return {};
+	case FieldType::Email:
+		return Qt::ImhEmailCharactersOnly
+			| Qt::ImhNoAutoUppercase
+			| Qt::ImhNoPredictiveText;
+	case FieldType::CardNumber:
+	case FieldType::CardCVC:
+		return Qt::ImhDigitsOnly
+			| Qt::ImhNoPredictiveText
+			| Qt::ImhSensitiveData;
+	case FieldType::CardExpireDate:
+		return Qt::ImhDigitsOnly | Qt::ImhNoPredictiveText;
+	case FieldType::Phone:
+		return Qt::ImhDialableCharactersOnly | Qt::ImhNoPredictiveText;
+	case FieldType::Money:
+		return Qt::ImhFormattedNumbersOnly | Qt::ImhNoPredictiveText;
+	}
+	Unexpected("FieldType in Payments::Ui::HintsForType.");
+}
+
 [[nodiscard]] base::unique_qptr<RpWidget> CreateWrap(
 		QWidget *parent,
 		FieldConfig &config) {
@@ -433,6 +458,9 @@ Field::Field(QWidget *parent, FieldConfig &&config)
 , _countryIso2(config.value) {
 	if (_masked) {
 		setupMaskedGeometry();
+		_masked->setInputMethodHints(HintsForType(_config.type));
+	} else {
+		_input->setInputMethodHints(HintsForType(_config.type));
 	}
 	if (_config.type == FieldType::Country) {
 		setupCountry();

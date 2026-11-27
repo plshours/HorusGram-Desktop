@@ -17,7 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/sandbox.h"
-#include "boxes/peer_list_controllers.h"
+#include "boxes/contacts_box.h"
 #include "boxes/about_box.h"
 #include "lang/lang_keys.h"
 #include "storage/localstorage.h"
@@ -217,7 +217,7 @@ void MainWindow::createGlobalMenu() {
 		this,
 		[=] {
 			ensureWindowShown();
-			controller().showLogoutConfirmation();
+			controller().showLogoutOptions();
 		});
 
 	auto quit = file->addAction(
@@ -522,6 +522,9 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *evt) {
 		}
 	} else if (obj == this && t == QEvent::Hide) {
 		_exposed = false;
+		if (IsX11() && isHidden()) {
+			not_null(windowHandle())->destroy();
+		}
 	} else if (obj == this && t == QEvent::ThemeChange) {
 		updateWindowIcon();
 	}

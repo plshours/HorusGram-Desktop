@@ -7,29 +7,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_phone.h"
 
-#include "lang/lang_keys.h"
-#include "intro/intro_code.h"
-#include "intro/intro_email.h"
-#include "intro/intro_qr.h"
-#include "styles/style_intro.h"
 #include "styles/style_hoursgram_design.h"
 #include "hoursgram/customization/intro_look.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
-#include "ui/wrap/fade_wrap.h"
-#include "ui/widgets/fields/special_fields.h"
-#include "main/main_account.h"
-#include "main/main_domain.h"
-#include "main/main_app_config.h"
-#include "main/main_session.h"
-#include "data/data_user.h"
-#include "ui/boxes/confirm_box.h"
 #include "boxes/abstract_box.h"
 #include "boxes/phone_banned_box.h"
 #include "core/application.h"
+#include "countries/countries_instance.h" // Countries::Groups
+#include "data/data_user.h"
+#include "intro/intro_code.h"
+#include "intro/intro_email.h"
+#include "intro/intro_qr.h"
+#include "lang/lang_keys.h"
+#include "main/main_account.h"
+#include "main/main_app_config.h"
+#include "main/main_domain.h"
+#include "main/main_session.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/widgets/fields/special_fields.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/fade_wrap.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
-#include "countries/countries_instance.h" // Countries::Groups
+
+#include "styles/style_intro.h"
 
 namespace Intro {
 namespace details {
@@ -335,7 +336,7 @@ void PhoneWidget::phoneSubmitFail(const MTP::Error &error) {
 
 	stopCheck();
 	_sentRequest = 0;
-	auto &err = error.type();
+	const auto &err = error.type();
 	if (err == u"PHONE_NUMBER_FLOOD"_q) {
 		Ui::show(Ui::MakeInformBox(tr::lng_error_phone_flood()));
 	} else if (err == u"PHONE_NUMBER_INVALID"_q) { // show error

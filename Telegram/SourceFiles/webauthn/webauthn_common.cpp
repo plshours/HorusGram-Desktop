@@ -7,15 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "webauthn/webauthn_common.h"
 
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#if !defined Q_OS_WIN && !defined Q_OS_MACOS
 #include "base/platform/linux/base_linux_library.h"
-#endif // !Q_OS_WIN && !Q_OS_MAC
+#endif // !Q_OS_WIN && !Q_OS_MACOS
 #include "base/weak_qptr.h"
 #include "core/application.h"
 #include "data/data_passkey_deserialize.h"
 #include "lang/lang_keys.h"
 #include "platform/platform_webauthn.h"
-#include "settings/cloud_password/settings_cloud_password_common.h"
 #include "ui/layers/generic_box.h"
 #include "ui/layers/show.h"
 #include "ui/widgets/fields/password_input.h"
@@ -34,11 +33,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <mutex>
 #include <vector>
 
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#if !defined Q_OS_WIN && !defined Q_OS_MACOS
 extern "C" {
 void _libudev_so_tramp_resolve_all(void) __attribute__((weak));
 } // extern "C"
-#endif // !Q_OS_WIN && !Q_OS_MAC
+#endif // !Q_OS_WIN && !Q_OS_MACOS
 
 namespace Platform::WebAuthn {
 namespace {
@@ -46,13 +45,13 @@ namespace {
 constexpr auto kDefaultTimeout = 60000;
 
 [[nodiscard]] bool UdevLibraryAvailable() {
-#if !defined Q_OS_WIN && !defined Q_OS_MAC
+#if !defined Q_OS_WIN && !defined Q_OS_MACOS
 	static const auto available = !_libudev_so_tramp_resolve_all
 		|| base::Platform::LoadLibrary("libudev.so.1");
 	return available;
-#else // !Q_OS_WIN && !Q_OS_MAC
+#else // !Q_OS_WIN && !Q_OS_MACOS
 	return true;
-#endif // Q_OS_WIN || Q_OS_MAC
+#endif // Q_OS_WIN || Q_OS_MACOS
 }
 
 enum class Outcome {
@@ -170,17 +169,28 @@ void ShowMessage(const QString &text) {
 				? tr::lng_passkey_pin_invalid()
 				: tr::lng_passkey_pin_about()),
 			st::boxLabel));
-		const auto field = Settings::CloudPassword::AddPasswordField(
-			box->verticalLayout(),
-			tr::lng_passkey_pin_placeholder(),
-			QString());
+		const auto &fieldSt = st::defaultInputField;
+		const auto row = box->addRow(object_ptr<Ui::RpWidget>(box));
+		row->resize(row->width(), fieldSt.heightMin);
+		const auto field = Ui::CreateChild<Ui::PasswordInput>(
+			row,
+			fieldSt,
+			tr::lng_passkey_pin_placeholder());
+		row->sizeValue() | rpl::on_next([=](QSize size) {
+			field->resize(size.width(), field->height());
+		}, row->lifetime());
 		box->setFocusCallback([=] { field->setFocusFast(); });
-		box->addButton(tr::lng_passkey_confirm(), [=] {
+		const auto confirm = [=] {
 			const auto pin = field->getLastText();
-			if (!pin.isEmpty()) {
-				submit(pin);
+			if (pin.isEmpty()) {
+				field->setFocus();
+				field->showError();
+				return;
 			}
-		});
+			submit(pin);
+		};
+		QObject::connect(field, &Ui::MaskedInputField::submitted, confirm);
+		box->addButton(tr::lng_passkey_confirm(), confirm);
 		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
 		box->boxClosing() | rpl::on_next([=] {
 			cancel();
@@ -722,5 +732,39 @@ void LoginViaCable(
 		callback(result);
 	});
 }
+
+#ifndef Q_OS_WIN
+bool IsSupported() {
+	return true;
+}
+
+void RegisterKey(
+		const Data::Passkey::RegisterData &data,
+		Fn<void(RegisterResult result)> callback) {
+	RegisterViaCable(data, std::move(callback));
+}
+
+void Login(
+		const Data::Passkey::LoginData &data,
+		Fn<void(LoginResult result)> callback) {
+	LoginViaCable(data, std::move(callback));
+}
+
+bool SecurityKeyPresent() {
+	return Libfido2DevicePresent();
+}
+
+void RegisterViaSecurityKey(
+		const Data::Passkey::RegisterData &data,
+		Fn<void(RegisterResult)> callback) {
+	RegisterViaLibfido2(data, std::move(callback));
+}
+
+void LoginViaSecurityKey(
+		const Data::Passkey::LoginData &data,
+		Fn<void(LoginResult)> callback) {
+	LoginViaLibfido2(data, std::move(callback));
+}
+#endif // !Q_OS_WIN
 
 } // namespace Platform::WebAuthn

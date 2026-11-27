@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "data/data_peer.h"
 #include "data/data_chat_participant_status.h"
+#include "data/data_peer.h"
 #include "data/data_peer_bot_commands.h"
 
 enum class ChatAdminRight;
@@ -23,6 +23,7 @@ enum class ChatDataFlag {
 	CallNotEmpty = (1 << 6),
 	CanSetUsername = (1 << 7),
 	NoForwards = (1 << 8),
+	HasWelcomeMessages = (1 << 9),
 
 	AyuNoForwards = (1 << 31),
 };
@@ -94,6 +95,9 @@ public:
 	}
 	[[nodiscard]] bool isMigrated() const {
 		return (_migratedTo != nullptr);
+	}
+	[[nodiscard]] bool hasWelcomeMessages() const {
+		return flags() & ChatDataFlag::HasWelcomeMessages;
 	}
 
 	[[nodiscard]] ChatAdminRightsInfo defaultAdminRights(

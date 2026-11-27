@@ -180,7 +180,7 @@ void BuildLinks(SectionBuilder &builder) {
 		.label = rpl::single(QString("HorusGram Desktop")),
 		.onClick = [=] {
 			QDesktopServices::openUrl(QString(
-				"https://github.com/plshours/HoursGram-Desktop"));
+				"https://github.com/plshours/HorusGram-Desktop"));
 		},
 	});
 

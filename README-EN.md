@@ -57,6 +57,13 @@ HorusGram is a native desktop Telegram client written in C++/Qt. It works with y
 - Copy photos and files from messages to the clipboard and paste them as an album
 - Select several chats at once
 
+### 💎 Everything from the latest Telegram
+- Based on Telegram Desktop **7.4.7**
+- **Wallet (Money)**: TON, transfers, on-chain gifts, offers and sales
+- **HTML widgets** in bots
+- **Story** posting, drafts and music in stories
+- Welcome messages, self-destructing photos and videos, video editor
+
 ## Download
 
 Beta is coming soon. Follow [@HoursGram](https://t.me/HoursGram) for news.

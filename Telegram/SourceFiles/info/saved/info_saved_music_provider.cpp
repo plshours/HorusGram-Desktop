@@ -15,16 +15,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_media_types.h"
 #include "data/data_saved_music.h"
 #include "data/data_session.h"
+#include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
-#include "history/history.h"
-#include "info/media/info_media_widget.h"
 #include "info/media/info_media_list_section.h"
+#include "info/media/info_media_widget.h"
 #include "info/info_controller.h"
+#include "layout/layout_selection.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
-#include "layout/layout_selection.h"
 #include "storage/storage_shared_media.h"
+
 #include "styles/style_overview.h"
 
 namespace Info::Saved {
@@ -142,7 +143,7 @@ void MusicProvider::checkPreload(
 		if (!preloadRequired) {
 			auto delta = _slice.distance(_aroundId, item);
 			Assert(delta != std::nullopt);
-			preloadRequired = (qAbs(*delta) >= minIdDelta);
+			preloadRequired = (std::abs(*delta) >= minIdDelta);
 		}
 		if (preloadRequired) {
 			_idsLimit = preloadIdsLimit;
@@ -222,9 +223,17 @@ std::vector<ListSection> MusicProvider::fillSections(
 }
 
 void MusicProvider::itemRemoved(not_null<const HistoryItem*> item) {
-	if (const auto i = _layouts.find(item); i != end(_layouts)) {
-		_layoutRemoved.fire(i->second.item.get());
-		_layouts.erase(i);
+	const auto i = _layouts.find(item);
+	if (i == end(_layouts)) {
+		return;
+	}
+	_layoutRemoved.fire(i->second.item.get());
+	// The list widget handles layoutRemoved() synchronously and may
+	// refresh its height from there, which can reach refreshViewer()
+	// -> refreshRows() -> fillSections() -> clearStaleLayouts() before
+	// we get back here, erasing this very entry, so look it up again.
+	if (const auto j = _layouts.find(item); j != end(_layouts)) {
+		_layouts.erase(j);
 	}
 }
 
@@ -250,7 +259,11 @@ rpl::producer<not_null<BaseLayout*>> MusicProvider::layoutRemoved() {
 }
 
 BaseLayout *MusicProvider::lookupLayout(const HistoryItem *item) {
-	return nullptr;
+	if (!item) {
+		return nullptr;
+	}
+	const auto i = _layouts.find(item);
+	return (i != _layouts.end()) ? i->second.item.get() : nullptr;
 }
 
 bool MusicProvider::isMyItem(not_null<const HistoryItem*> item) {

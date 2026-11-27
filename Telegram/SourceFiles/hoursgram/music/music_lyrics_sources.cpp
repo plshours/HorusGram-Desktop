@@ -233,7 +233,7 @@ void Request(
 		return;
 	}
 	auto request = QNetworkRequest(url);
-	request.setRawHeader("User-Agent", "HoursGram Desktop (https://github.com/plshours/HoursGram-Desktop)");
+	request.setRawHeader("User-Agent", "HoursGram Desktop (https://github.com/plshours/HorusGram-Desktop)");
 	request.setTransferTimeout(15000);
 	const auto reply = Net().get(request);
 	LimitReply(reply, kMaxTextBytes);
@@ -625,7 +625,7 @@ void GetHtml(const QString &address, Fn<void(QString)> done) {
 	}
 	auto request = QNetworkRequest(url);
 	request.setRawHeader("User-Agent",
-		"HoursGram Desktop (https://github.com/plshours/HoursGram-Desktop)");
+		"HoursGram Desktop (https://github.com/plshours/HorusGram-Desktop)");
 	request.setAttribute(
 		QNetworkRequest::RedirectPolicyAttribute,
 		QNetworkRequest::NoLessSafeRedirectPolicy);

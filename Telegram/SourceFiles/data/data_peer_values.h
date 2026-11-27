@@ -7,9 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "data/data_peer.h"
 #include "data/data_peer_values.h"
+
 #include "data/data_chat_participant_status.h"
+#include "data/data_peer.h"
 
 enum class ImageRoundRadius;
 
@@ -148,10 +149,13 @@ inline auto PeerFullFlagValue(
 	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> CanManageGroupCallValue(
 	not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> AllowsForwardingValue(
+	not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> PeerPremiumValue(not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<bool> AmPremiumValue(
 	not_null<Main::Session*> session);
 
+[[nodiscard]] QString BotStatusText(not_null<UserData*> user);
 [[nodiscard]] TimeId SortByOnlineValue(not_null<UserData*> user, TimeId now);
 [[nodiscard]] crl::time OnlineChangeTimeout(
 	LastseenStatus status,

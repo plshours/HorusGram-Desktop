@@ -17,10 +17,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/sandbox.h"
 
 #include <windows.h>
-#elif defined Q_OS_MAC // Q_OS_WIN
+#elif defined Q_OS_MACOS // Q_OS_WIN
 #include "core/sandbox.h"
 #include "platform/mac/native_event_mac.h"
-#endif // Q_OS_WIN || Q_OS_MAC
+#endif // Q_OS_WIN || Q_OS_MACOS
 
 namespace Iv::Editor {
 namespace {
@@ -28,6 +28,15 @@ namespace {
 [[nodiscard]] std::vector<not_null<Window*>> &LiveWindows() {
 	static auto result = std::vector<not_null<Window*>>();
 	return result;
+}
+
+[[nodiscard]] Window *ActiveWindow() {
+	for (const auto &window : LiveWindows()) {
+		if (window->isActiveWindow()) {
+			return window;
+		}
+	}
+	return nullptr;
 }
 
 } // namespace
@@ -118,7 +127,7 @@ bool Window::nativeEvent(
 	return false;
 }
 
-#elif defined Q_OS_MAC // Q_OS_WIN
+#elif defined Q_OS_MACOS // Q_OS_WIN
 
 bool Window::nativeEvent(
 		const QByteArray &eventType,
@@ -134,14 +143,20 @@ bool Window::nativeEvent(
 	return false;
 }
 
-#endif // Q_OS_WIN || Q_OS_MAC
+#endif // Q_OS_WIN || Q_OS_MACOS
 
 bool CloseActiveWindow() {
-	for (const auto &window : LiveWindows()) {
-		if (window->isActiveWindow()) {
-			window->close();
-			return true;
-		}
+	if (const auto window = ActiveWindow()) {
+		window->close();
+		return true;
+	}
+	return false;
+}
+
+bool MinimizeActiveWindow() {
+	if (const auto window = ActiveWindow()) {
+		window->setWindowState(window->windowState() | Qt::WindowMinimized);
+		return true;
 	}
 	return false;
 }

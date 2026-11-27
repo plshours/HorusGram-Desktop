@@ -8,40 +8,41 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_participants_box.h"
 
 #include "api/api_chat_participants.h"
+#include "apiwrap.h"
+#include "base/unixtime.h"
+#include "boxes/peers/add_participants_box.h"
+#include "boxes/peers/edit_members_visible.h"
 #include "boxes/peers/edit_participant_box.h"
 #include "boxes/peers/edit_tag_control.h"
-#include "boxes/peers/add_participants_box.h"
 #include "boxes/peers/prepare_short_info_box.h" // PrepareShortInfoBox
-#include "boxes/peers/edit_members_visible.h"
-#include "ui/boxes/confirm_box.h"
-#include "boxes/max_invite_box.h"
 #include "boxes/add_contact_box.h"
-#include "main/main_session.h"
-#include "menu/menu_antispam_validator.h"
-#include "mtproto/mtproto_config.h"
-#include "apiwrap.h"
-#include "lang/lang_keys.h"
-#include "dialogs/dialogs_indexed_list.h"
+#include "boxes/max_invite_box.h"
+#include "data/data_changes.h"
+#include "data/data_channel.h"
+#include "data/data_chat.h"
 #include "data/data_peer_values.h"
 #include "data/data_session.h"
 #include "data/data_stories.h"
-#include "data/data_channel.h"
-#include "data/data_chat.h"
 #include "data/data_user.h"
-#include "data/data_changes.h"
-#include "base/unixtime.h"
+#include "dialogs/dialogs_indexed_list.h"
+#include "history/view/history_view_message.h"
+#include "history/history.h"
+#include "info/profile/info_profile_values.h"
+#include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "menu/menu_antispam_validator.h"
+#include "mtproto/mtproto_config.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/chat/chat_style.h"
 #include "ui/effects/outline_segments.h"
 #include "ui/layers/generic_box.h"
-#include "ui/vertical_list.h"
+#include "ui/text/text_utilities.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/menu/menu_multiline_action.h"
 #include "ui/widgets/popup_menu.h"
-#include "ui/text/text_utilities.h"
-#include "info/profile/info_profile_values.h"
+#include "ui/vertical_list.h"
 #include "window/window_session_controller.h"
-#include "history/history.h"
-#include "history/view/history_view_message.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_menu_icons.h"
 
@@ -401,10 +402,14 @@ Fn<void(
 		};
 		if (const auto chat = peer->asChatNotMigrated()) {
 			const auto saveChatAdmin = [&](bool isAdmin) {
-				SaveChatAdmin(show, chat, user, isAdmin, done, onFail);
-				if (rank) {
-					SaveMemberRank(show, chat, user, *rank, [] {}, [] {});
-				}
+				// Sent together, the server can reject or undo either change.
+				SaveChatAdmin(show, chat, user, isAdmin, [=] {
+					if (rank) {
+						SaveMemberRank(show, chat, user, *rank, done, done);
+					} else {
+						done();
+					}
+				}, onFail);
 			};
 			if (strippedNewRights.flags
 				== chat->defaultAdminRights(user).flags) {
@@ -822,16 +827,17 @@ void ParticipantsAdditionalData::applyBannedLocally(
 	} else {
 		const auto kicked = rights.flags & ChatRestriction::ViewMessages;
 		const auto alreadyRestrictedBy = restrictedBy(participant);
-		applyParticipant(Api::ChatParticipant(
-			kicked
-				? Api::ChatParticipant::Type::Banned
-				: Api::ChatParticipant::Type::Restricted,
-			participant->id,
-			alreadyRestrictedBy
-				? peerToUser(alreadyRestrictedBy->id)
-				: participant->session().userId(),
-			std::move(rights),
-			ChatAdminRightsInfo()));
+		applyParticipant(
+			Api::ChatParticipant(
+				kicked
+					? Api::ChatParticipant::Type::Banned
+					: Api::ChatParticipant::Type::Restricted,
+				participant->id,
+				alreadyRestrictedBy
+					? peerToUser(alreadyRestrictedBy->id)
+					: participant->session().userId(),
+				std::move(rights),
+				ChatAdminRightsInfo()));
 	}
 }
 
@@ -1373,6 +1379,9 @@ auto ParticipantsBoxController::saveState() const
 	my->offset = _offset;
 	my->allLoaded = _allLoaded;
 	my->wasLoading = (_loadRequestId != 0);
+	my->groupByRole = _groupByRole.current();
+	my->adminsPreloaded = _adminsPreloaded;
+	my->wasPreloadingAdmins = (_adminsRequestId != 0);
 	if (const auto search = searchController()) {
 		my->searchState = search->saveState();
 	}
@@ -1433,11 +1442,16 @@ void ParticipantsBoxController::restoreState(
 		_additional = std::move(my->additional);
 		_offset = my->offset;
 		_allLoaded = my->allLoaded;
+		_adminsPreloaded = my->adminsPreloaded;
+		_groupByRole = my->groupByRole;
 		if (const auto search = searchController()) {
 			search->restoreState(std::move(my->searchState));
 		}
 		if (my->wasLoading) {
 			loadMoreRows();
+		}
+		if (my->wasPreloadingAdmins) {
+			preloadAdmins();
 		}
 		const auto was = _fullCountValue.current();
 		PeerListController::restoreState(std::move(state));
@@ -1581,7 +1595,11 @@ void ParticipantsBoxController::unload() {
 	if (const auto requestId = base::take(_loadRequestId)) {
 		_api.request(requestId).cancel();
 	}
+	if (const auto requestId = base::take(_adminsRequestId)) {
+		_api.request(requestId).cancel();
+	}
 	_allLoaded = false;
+	_adminsPreloaded = false;
 	_offset = 0;
 }
 
@@ -1590,6 +1608,7 @@ void ParticipantsBoxController::rebuild() {
 		prepareChatRows(chat);
 	} else {
 		loadMoreRows();
+		preloadAdmins();
 	}
 	refreshRows();
 }
@@ -1647,7 +1666,7 @@ void ParticipantsBoxController::rebuildChatParticipants(
 		return;
 	}
 
-	auto &participants = chat->participants;
+	const auto &participants = chat->participants;
 	auto count = delegate()->peerListFullRowsCount();
 	for (auto i = 0; i != count;) {
 		auto row = delegate()->peerListRowAt(i);
@@ -2711,6 +2730,48 @@ void ParticipantsBoxController::applyRoleSectionHeaders() {
 	}
 }
 
+void ParticipantsBoxController::preloadAdmins() {
+	if (_adminsPreloaded
+		|| _adminsRequestId
+		|| !_groupByRole.current()
+		|| (_role != Role::Profile && _role != Role::Members)) {
+		return;
+	}
+	const auto channel = _peer->asChannel();
+	if (!channel || !channel->canViewAdmins()) {
+		return;
+	}
+	const auto offset = 0;
+	const auto participantsHash = uint64(0);
+	_adminsRequestId = _api.request(MTPchannels_GetParticipants(
+		channel->inputChannel(),
+		MTP_channelParticipantsAdmins(),
+		MTP_int(offset),
+		MTP_int(channel->session().serverConfig().chatSizeMax),
+		MTP_long(participantsHash)
+	)).done([=](const MTPchannels_ChannelParticipants &result) {
+		_adminsRequestId = 0;
+		_adminsPreloaded = true;
+		result.match([&](const MTPDchannels_channelParticipants &data) {
+			const auto &[availableCount, list]
+				= Api::ChatParticipants::Parse(channel, data);
+			for (const auto &data : list) {
+				if (const auto participant = _additional.applyParticipant(
+						data)) {
+					appendRow(participant);
+				}
+			}
+		}, [](const MTPDchannels_channelParticipantsNotModified &) {
+			LOG(("API Error: "
+				"channels.channelParticipantsNotModified received!"));
+		});
+		resort();
+		refreshRows();
+	}).fail([=] {
+		_adminsRequestId = 0;
+	}).send();
+}
+
 void ParticipantsBoxController::resort() {
 	if (_groupByRole.current()) {
 		if (_onlineSorter) {
@@ -2735,6 +2796,7 @@ void ParticipantsBoxController::setGroupByRole(bool grouped) {
 		return;
 	}
 	_groupByRole = grouped;
+	preloadAdmins();
 	resort();
 }
 

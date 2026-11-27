@@ -7,18 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "media/streaming/media_streaming_video_track.h"
 
+#include "base/concurrent_timer.h"
+#include "base/debug_log.h"
+#include "core/crash_reports.h"
 #include "ffmpeg/ffmpeg_utility.h"
 #include "media/audio/media_audio.h"
 #include "media/media_common.h"
-#include "base/concurrent_timer.h"
-#include "core/crash_reports.h"
-#include "base/debug_log.h"
 
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 #include "media/streaming/media_streaming_native_frame_mac.h"
 
 #include <CoreVideo/CoreVideo.h>
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 
 namespace Media {
 namespace Streaming {
@@ -29,6 +29,14 @@ constexpr auto kFinishedPosition = std::numeric_limits<crl::time>::max();
 static_assert(kDisplaySkipped != kTimeUnknown);
 
 using ::Media::ValidFrameSize;
+
+[[nodiscard]] crl::time WorldTimeDelay(crl::time trackDelay, float64 speed) {
+	if (trackDelay <= 0 || speed <= 0. || speed == 1.) {
+		return trackDelay;
+	}
+	const auto adjusted = base::SafeRound(trackDelay / speed);
+	return (adjusted < 1.) ? crl::time(1) : crl::time(adjusted);
+}
 
 [[nodiscard]] QImage ConvertToARGB32(
 		FrameFormat format,
@@ -277,7 +285,7 @@ int VideoTrackObject::durationByPacket(const FFmpeg::Packet &packet) {
 
 void VideoTrackObject::queueReadFrames(crl::time delay) {
 	if (delay > 0) {
-		_readFramesTimer.callOnce(delay);
+		_readFramesTimer.callOnce(std::min(delay, kDurationMax - 1));
 	} else if (!_queued) {
 		_queued = true;
 		_weak.with([](VideoTrackObject &that) {
@@ -320,7 +328,10 @@ void VideoTrackObject::readFrames() {
 auto VideoTrackObject::readEnoughFrames(crl::time trackTime)
 -> ReadEnoughState {
 	const auto dropStaleFrames = !_options.waitForMarkAsShown;
-	const auto state = _shared->prepareState(trackTime, dropStaleFrames);
+	const auto state = _shared->prepareState(
+		trackTime,
+		_options.speed,
+		dropStaleFrames);
 	return v::match(state, [&](Shared::PrepareFrame frame)
 	-> ReadEnoughState {
 		while (true) {
@@ -461,7 +472,7 @@ void VideoTrackObject::rasterizeFrame(not_null<Frame*> frame) {
 	frame->format = FrameFormat::None;
 	frame->nativeFrame = NativeFrame();
 	if (frame->decoded->hw_frames_ctx) {
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 		const auto hwFormat = frame->decoded->format;
 		const auto wantARGB = requireARGB32();
 		const auto isVT = (hwFormat == AV_PIX_FMT_VIDEOTOOLBOX);
@@ -494,7 +505,7 @@ void VideoTrackObject::rasterizeFrame(not_null<Frame*> frame) {
 				}
 				return;
 		}
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 		if (!frame->transferred) {
 			frame->transferred = FFmpeg::MakeFramePointer();
 		}
@@ -751,7 +762,9 @@ bool VideoTrackObject::processFirstFrame() {
 
 crl::time VideoTrackObject::currentFramePosition() const {
 	const auto position = FramePosition(_stream);
-	if (position == kTimeUnknown || position == kFinishedPosition) {
+	if (position == kTimeUnknown
+		|| position == kFinishedPosition
+		|| position > kDurationMax) {
 		return kTimeUnknown;
 	}
 	return _loopingShift + std::clamp(
@@ -877,6 +890,7 @@ not_null<const VideoTrack::Frame*> VideoTrack::Shared::getFrame(
 
 auto VideoTrack::Shared::prepareState(
 	crl::time trackTime,
+	float64 playbackSpeed,
 	bool dropStaleFrames)
 -> PrepareState {
 	const auto prepareNext = [&](int index) -> PrepareState {
@@ -906,7 +920,9 @@ auto VideoTrack::Shared::prepareState(
 			Assert(frame->position >= trackTime);
 			Assert(frame->position - trackTime + 1 > 0);
 
-			return PrepareNextCheck(frame->position - trackTime + 1);
+			return PrepareNextCheck(WorldTimeDelay(
+				frame->position - trackTime + 1,
+				playbackSpeed));
 		}
 	};
 	const auto finishPrepare = [&](int index) -> PrepareState {
@@ -983,7 +999,8 @@ auto VideoTrack::Shared::presentFrame(
 			|| IsStale(frame, time.trackTime)) {
 			return { kTimeUnknown, kTimeUnknown };
 		}
-		return { kTimeUnknown, (frame->position - time.trackTime + 1) };
+		const auto delay = frame->position - time.trackTime + 1;
+		return { kTimeUnknown, WorldTimeDelay(delay, playbackSpeed) };
 	};
 
 	switch (counter()) {
@@ -1283,10 +1300,10 @@ QImage VideoTrack::frameImage(
 		if (frame->format == FrameFormat::YUV420
 			|| frame->format == FrameFormat::NV12) {
 			frame->original = ConvertToARGB32(frame->format, frame->yuv);
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 		} else if (frame->format == FrameFormat::NativeTexture) {
 			frame->original = ConvertNativeFrameToARGB32(frame->nativeFrame);
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 		}
 	}
 	if (GoodForRequest(
@@ -1329,10 +1346,10 @@ QImage VideoTrack::currentFrameImage() {
 		if (frame->format == FrameFormat::YUV420
 			|| frame->format == FrameFormat::NV12) {
 			frame->original = ConvertToARGB32(frame->format, frame->yuv);
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 		} else if (frame->format == FrameFormat::NativeTexture) {
 			frame->original = ConvertNativeFrameToARGB32(frame->nativeFrame);
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 		}
 	}
 	return frame->original;

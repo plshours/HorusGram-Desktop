@@ -7,18 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_chat.h"
 
+#include "api/api_invite_links.h"
+#include "apiwrap.h"
 #include "core/application.h"
-#include "data/data_user.h"
-#include "data/data_channel.h"
-#include "data/data_session.h"
+#include "data/notify/data_notify_settings.h"
 #include "data/data_changes.h"
+#include "data/data_channel.h"
 #include "data/data_group_call.h"
 #include "data/data_message_reactions.h"
-#include "data/notify/data_notify_settings.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
 #include "history/history.h"
 #include "main/main_session.h"
-#include "apiwrap.h"
-#include "api/api_invite_links.h"
 
 // HorusGram includes
 #include "ayu/ayu_settings.h"
@@ -65,6 +65,7 @@ ChatAdminRightsInfo ChatData::defaultAdminRights(not_null<UserData*> user) {
 		| Flag::InviteByLinkOrAdd
 		| Flag::PinMessages
 		| Flag::ManageCall
+		| Flag::ManageWelcomeMessages
 		| (isCreator ? Flag::AddAdmins : Flag(0)));
 }
 
@@ -516,9 +517,12 @@ void ApplyChatUpdate(not_null<ChatData*> chat, const MTPDchatFull &update) {
 		chat->setBotCommands({});
 	}
 	using Flag = ChatDataFlag;
-	const auto mask = Flag::CanSetUsername;
+	const auto mask = Flag::CanSetUsername | Flag::HasWelcomeMessages;
 	chat->setFlags((chat->flags() & ~mask)
-		| (update.is_can_set_username() ? Flag::CanSetUsername : Flag()));
+		| (update.is_can_set_username() ? Flag::CanSetUsername : Flag())
+		| (update.is_has_welcome_messages()
+			? Flag::HasWelcomeMessages
+			: Flag()));
 	if (const auto photo = update.vchat_photo()) {
 		chat->setUserpicPhoto(*photo);
 	} else {

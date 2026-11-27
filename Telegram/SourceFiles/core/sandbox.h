@@ -16,6 +16,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class QLockFile;
 
+namespace Test {
+
+// Defined in test/test_popup_hold.cpp, so core includes no test/ header.
+[[nodiscard]] bool KeepPopupsOnDeactivate();
+
+} // namespace Test
+
 namespace Core {
 
 extern const char kOptionDeadlockDetector[];
@@ -73,7 +80,6 @@ public:
 		return *static_cast<Sandbox*>(QCoreApplication::instance());
 	}
 	static void QuitWhenStarted();
-	static void NotifySystemShuttingDown();
 
 	~Sandbox();
 
@@ -81,7 +87,11 @@ protected:
 	bool event(QEvent *e) override;
 
 private:
-	typedef QPair<QLocalSocket*, QByteArray> LocalClient;
+	struct LocalClient {
+		QLocalSocket *socket = nullptr;
+		QByteArray buffer;
+		bool externalUrlReceived = false;
+	};
 	typedef QList<LocalClient> LocalClients;
 
 	struct PostponedCall {
@@ -137,7 +147,6 @@ private:
 	bool _secondInstance = false;
 	bool _started = false;
 	static bool QuitOnStartRequested;
-	static bool SystemShuttingDown;
 
 	std::unique_ptr<UpdateChecker> _updateChecker;
 

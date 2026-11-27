@@ -22,15 +22,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/layers/generic_box.h"
-#include "ui/new_badges.h"
-#include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/tooltip.h"
 #include "ui/wrap/slide_wrap.h"
+#include "ui/new_badges.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
 #include "ui/ui_utility.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_info.h"
 #include "styles/style_menu_icons.h"
@@ -46,9 +47,13 @@ namespace Window {
 	if constexpr (!Platform::IsMacStoreBuild()
 		&& !Platform::IsWindowsStoreBuild()) {
 		Ui::InstallTooltip(label, [] {
-			return u"Build date: %1.\nQt version: %2."_q
-				.arg(__DATE__)
-				.arg(QT_VERSION_STR);
+			if constexpr (Platform::IsLinux()) {
+				return u"Qt version: %1."_q.arg(QT_VERSION_STR);
+			} else {
+				return u"Build date: %1.\nQt version: %2."_q
+					.arg(__DATE__)
+					.arg(QT_VERSION_STR);
+			}
 		});
 	}
 	return label;
@@ -294,11 +299,11 @@ void SetupMenuBots(
 		wrap->clear();
 		for (const auto &bot : bots->attachBots()) {
 			const auto user = bot.user;
-			if (!bot.inMainMenu || !bot.media) {
+			if (!bot.inMainMenu || !bot.media || user->isOldWalletBot()) {
 				continue;
 			} else if (const auto media = bot.media; !media->loaded()) {
 				if (!*iconLoadLifetime) {
-					auto &session = user->session();
+					const auto &session = user->session();
 					*iconLoadLifetime = session.downloaderTaskFinished(
 					) | rpl::on_next([=] {
 						if (media->loaded()) {

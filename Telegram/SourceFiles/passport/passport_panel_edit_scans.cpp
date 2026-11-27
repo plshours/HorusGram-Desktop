@@ -7,23 +7,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "passport/passport_panel_edit_scans.h"
 
-#include "passport/passport_panel_controller.h"
+#include "boxes/abstract_box.h"
+#include "core/file_utilities.h"
+#include "lang/lang_keys.h"
 #include "passport/ui/passport_details_row.h"
+#include "passport/passport_panel_controller.h"
+#include "storage/file_upload.h" // For Storage::kUseBigFilesFrom.
+#include "storage/storage_media_prepare.h"
+#include "ui/chat/attach/attach_prepare.h"
+#include "ui/image/image_prepare.h"
+#include "ui/text/text_options.h"
+#include "ui/widgets/box_content_divider.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
-#include "ui/widgets/box_content_divider.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
-#include "ui/chat/attach/attach_prepare.h"
-#include "ui/text/text_options.h"
-#include "ui/image/image_prepare.h"
 #include "ui/painter.h"
-#include "core/file_utilities.h"
-#include "lang/lang_keys.h"
-#include "boxes/abstract_box.h"
-#include "storage/storage_media_prepare.h"
-#include "storage/file_upload.h" // For Storage::kUseBigFilesFrom.
+
 #include "styles/style_passport.h"
 #include "styles/style_widgets.h"
 
@@ -745,7 +746,7 @@ void EditScans::scanFieldsChanged(bool changed) {
 
 void EditScans::updateErrorLabels() {
 	const auto updateList = [&](FileType type) {
-		auto &list = this->list(type);
+		const auto &list = this->list(type);
 		if (list.uploadMoreError) {
 			list.uploadMoreError->toggle(
 				!list.uploadedSomeMore(),
@@ -963,7 +964,7 @@ void EditScans::toggleSpecialScanError(FileType type, bool shown) {
 }
 
 void EditScans::specialScanErrorAnimationCallback(FileType type) {
-	auto &scan = findSpecialScan(type);
+	const auto &scan = findSpecialScan(type);
 	const auto error = scan.errorAnimation.value(
 		scan.errorShown ? 1. : 0.);
 	if (error == 0.) {

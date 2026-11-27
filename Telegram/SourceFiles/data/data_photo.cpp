@@ -7,18 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_photo.h"
 
+#include "core/application.h"
 #include "data/data_document.h"
-#include "data/data_session.h"
-#include "data/data_reply_preview.h"
 #include "data/data_photo_media.h"
-#include "main/main_session.h"
+#include "data/data_reply_preview.h"
+#include "data/data_session.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "main/main_session.h"
 #include "media/streaming/media_streaming_loader_local.h"
 #include "media/streaming/media_streaming_loader_mtproto.h"
-#include "storage/storage_account.h"
 #include "storage/file_download.h"
-#include "core/application.h"
+#include "storage/storage_account.h"
 
 namespace {
 
@@ -205,6 +205,21 @@ void PhotoData::cancel() {
 	}
 }
 
+void PhotoData::clearLocalCache() {
+	auto keys = base::flat_set<Storage::Cache::Key>();
+	for (auto &file : _images) {
+		if (const auto key = file.location.file().cacheKey()) {
+			keys.emplace(key);
+		}
+		if (file.loader) {
+			file.loader->cancel();
+		}
+	}
+	for (const auto &key : keys) {
+		_owner->cache().remove(key);
+	}
+}
+
 float64 PhotoData::progress() const {
 	if (uploading()) {
 		if (uploadingData->size > 0) {
@@ -254,7 +269,7 @@ Image *PhotoData::getReplyPreview(
 
 Image *PhotoData::getReplyPreview(not_null<HistoryItem*> item) {
 	const auto media = item->media();
-	const auto spoiler = (media && media->hasSpoiler());
+	const auto spoiler = (media && media->hasSpoilerForPreview());
 	return getReplyPreview(item->fullId(), item->history()->peer, spoiler);
 }
 
@@ -461,12 +476,8 @@ void PhotoData::updateImages(
 	}
 }
 
-[[nodiscard]] bool PhotoData::hasAttachedStickers() const {
+bool PhotoData::hasAttachedStickers() const {
 	return _hasStickers;
-}
-
-void PhotoData::setHasAttachedStickers(bool value) {
-	_hasStickers = value;
 }
 
 int PhotoData::width() const {
@@ -522,15 +533,6 @@ bool PhotoData::hasVideo() const {
 
 bool PhotoData::hasVideoSmall() const {
 	return hasVideo() && _videoSizes->small.location.valid();
-}
-
-bool PhotoData::videoLoading(Data::PhotoSize size) const {
-	return _videoSizes && videoFile(size).loader != nullptr;
-}
-
-bool PhotoData::videoFailed(Data::PhotoSize size) const {
-	return _videoSizes
-		&& (videoFile(size).flags & Data::CloudFile::Flag::Failed);
 }
 
 void PhotoData::loadVideo(Data::PhotoSize size, Data::FileOrigin origin) {

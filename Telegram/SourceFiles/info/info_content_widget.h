@@ -7,15 +7,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "info/statistics/info_statistics_tag.h"
 #include "info/info_flexible_scroll.h"
 #include "info/info_wrap_widget.h"
-#include "info/statistics/info_statistics_tag.h"
 #include "ui/controls/swipe_handler.h"
 #include "ui/controls/swipe_handler_data.h"
 
 namespace Api {
 struct WhoReadList;
 } // namespace Api
+
+namespace Data {
+class SavedMessages;
+} // namespace Data
 
 namespace Dialogs::Stories {
 struct Content;
@@ -129,6 +133,10 @@ public:
 	}
 	virtual void fillTopBarMenu(const Ui::Menu::MenuCallback &addAction);
 
+	[[nodiscard]] virtual rpl::producer<> topBarMenuFilledChanges() const {
+		return rpl::never<>();
+	}
+
 	[[nodiscard]] virtual bool closeByOutsideClick() const {
 		return true;
 	}
@@ -143,6 +151,9 @@ public:
 	}
 	[[nodiscard]] virtual rpl::producer<QString> title() = 0;
 	[[nodiscard]] virtual rpl::producer<QString> subtitle() {
+		return nullptr;
+	}
+	[[nodiscard]] virtual rpl::producer<QString> titleBadge() {
 		return nullptr;
 	}
 	[[nodiscard]] virtual auto titleStories()
@@ -211,7 +222,7 @@ protected:
 	void scrollTo(const Ui::ScrollToRequest &request);
 	[[nodiscard]] rpl::producer<int> scrollTopValue() const;
 	[[nodiscard]] int innerTopReserve() const {
-		return _innerTopReserve;
+		return _innerTopReserve.current();
 	}
 
 	void setPaintPadding(const style::margins &padding);
@@ -220,6 +231,7 @@ protected:
 
 private:
 	Ui::RpWidget *doSetInnerWidget(object_ptr<Ui::RpWidget> inner);
+	void applyScrollTopRestore();
 	Ui::RpWidget *doSetupFlexibleInnerWidget(
 		object_ptr<Ui::RpWidget> inner,
 		FlexibleScrollData &flexibleScroll,
@@ -243,10 +255,12 @@ private:
 	base::unique_qptr<Ui::RpWidget> _searchWrap = nullptr;
 	QPointer<Ui::InputField> _searchField;
 	int _innerDesiredHeight = 0;
-	int _innerTopReserve = 0;
+	rpl::variable<int> _innerTopReserve = 0;
 	int _additionalScroll = 0;
 	int _addedHeight = 0;
 	int _maxVisibleHeight = 0;
+	std::optional<int> _scrollTopRestore;
+	bool _applyingScrollTopRestore = false;
 	bool _isStackBottom = false;
 
 	// To paint round edges from content.
@@ -265,6 +279,7 @@ public:
 		Data::ForumTopic *topic,
 		Data::SavedSublist *sublist,
 		PeerId migratedPeerId);
+	explicit ContentMemento(not_null<Data::SavedMessages*> savedMessages);
 	explicit ContentMemento(PeerGifts::Tag gifts);
 	explicit ContentMemento(Settings::Tag settings);
 	explicit ContentMemento(Downloads::Tag downloads);
@@ -299,6 +314,9 @@ public:
 	}
 	[[nodiscard]] Data::SavedSublist *sublist() const {
 		return _sublist;
+	}
+	[[nodiscard]] Data::SavedMessages *savedMessages() const {
+		return _savedMessages;
 	}
 	[[nodiscard]] UserData *settingsSelf() const {
 		return _settingsSelf;
@@ -383,6 +401,7 @@ private:
 	const PeerId _migratedPeerId = 0;
 	Data::ForumTopic *_topic = nullptr;
 	Data::SavedSublist *_sublist = nullptr;
+	Data::SavedMessages * const _savedMessages = nullptr;
 	UserData * const _settingsSelf = nullptr;
 	PeerData * const _storiesPeer = nullptr;
 	int _storiesAlbumId = 0;

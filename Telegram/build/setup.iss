@@ -1,7 +1,7 @@
 #define MyAppShortName "HoursGram"
 #define MyAppName "HoursGram Desktop"
 #define MyAppPublisher "HoursGram"
-#define MyAppURL "https://github.com/plshours/HoursGram-Desktop"
+#define MyAppURL "https://github.com/plshours/HorusGram-Desktop"
 #define MyAppExeName "HoursGram.exe"
 #define MyAppId "8DB8830E-2B82-4B9B-8779-410C74849E42"
 #define CurrentYear GetDateTimeString('yyyy','','')
@@ -36,19 +36,27 @@ DisableProgramGroupPage=no
 WizardStyle=modern
 SignTool=sha256
 
+#ifndef MyOutputBaseFilename
+  #if MyBuildTarget == "winarm"
+    #define MyOutputBaseFilename "hoursgram-setup-arm64." + MyAppVersionFull
+  #elif MyBuildTarget == "win64"
+    #define MyOutputBaseFilename "hoursgram-setup-x64." + MyAppVersionFull
+  #else
+    #define MyOutputBaseFilename "hoursgram-setup." + MyAppVersionFull
+  #endif
+#endif
+OutputBaseFilename={#MyOutputBaseFilename}
+
 #if MyBuildTarget == "winarm"
   ArchitecturesAllowed="arm64"
-  OutputBaseFilename=tsetup-arm64.{#MyAppVersionFull}
   #define ArchModulesFolder "arm64"
   AppVerName={#MyAppName} {#MyAppVersion} arm64
 #elif MyBuildTarget == "win64"
   ArchitecturesAllowed="x64compatible"
   ArchitecturesInstallIn64BitMode="x64compatible"
-  OutputBaseFilename=hoursgram-setup-x64.{#MyAppVersionFull}
   #define ArchModulesFolder "x64"
   AppVerName={#MyAppName} {#MyAppVersion} 64bit
 #else
-  OutputBaseFilename=hoursgram-setup.{#MyAppVersionFull}
   #define ArchModulesFolder "x86"
   AppVerName={#MyAppName} {#MyAppVersion} 32bit
 #endif
@@ -72,6 +80,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#ReleasePath}\HoursGram.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleasePath}\Updater.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ReleasePath}\{#ModulesFolder}\TelegramWidgetHelper.exe"; DestDir: "{app}\{#ModulesFolder}"; Flags: ignoreversion
 #if MyBuildTarget != "winarm"
 Source: "{#ReleasePath}\{#ModulesFolder}\d3d\d3dcompiler_47.dll"; DestDir: "{app}\{#ModulesFolder}\d3d"; Flags: ignoreversion
 #endif
@@ -89,6 +98,16 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 Type: files; Name: "{app}\data"
 Type: files; Name: "{app}\data_config"
 Type: files; Name: "{app}\log.txt"
+Type: files; Name: "{app}\log_start0.txt"
+Type: files; Name: "{app}\log_start1.txt"
+Type: files; Name: "{app}\log_start2.txt"
+Type: files; Name: "{app}\log_start3.txt"
+Type: files; Name: "{app}\log_start4.txt"
+Type: files; Name: "{app}\log_start5.txt"
+Type: files; Name: "{app}\log_start6.txt"
+Type: files; Name: "{app}\log_start7.txt"
+Type: files; Name: "{app}\log_start8.txt"
+Type: files; Name: "{app}\log_start9.txt"
 Type: filesandordirs; Name: "{app}\DebugLogs"
 Type: filesandordirs; Name: "{app}\tupdates"
 Type: filesandordirs; Name: "{app}\tdata"
@@ -99,6 +118,16 @@ Type: dirifempty; Name: "{app}"
 Type: files; Name: "{userappdata}\{#MyAppName}\data"
 Type: files; Name: "{userappdata}\{#MyAppName}\data_config"
 Type: files; Name: "{userappdata}\{#MyAppName}\log.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start0.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start1.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start2.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start3.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start4.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start5.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start6.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start7.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start8.txt"
+Type: files; Name: "{userappdata}\{#MyAppName}\log_start9.txt"
 Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\DebugLogs"
 Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tupdates"
 Type: filesandordirs; Name: "{userappdata}\{#MyAppName}\tdata"

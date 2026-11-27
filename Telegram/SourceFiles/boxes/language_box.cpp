@@ -17,6 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mainwidget.h"
+#include "mainwindow.h"
 #include "platform/platform_translate_provider.h"
 #include "settings/settings_common.h"
 #include "spellcheck/spellcheck_types.h"
@@ -43,8 +45,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/vertical_list.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
-#include "mainwidget.h"
-#include "mainwindow.h"
 
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
@@ -277,8 +277,8 @@ std::pair<Languages, Languages> PrepareLists() {
 	if (recent.empty() || recent.front().id != current) {
 		if (ranges::find(official, current, projId) == end(official)) {
 			const auto generate = [&] {
-				const auto name = (current == "#custom")
-					? "Custom lang pack"
+				const auto name = (current == Lang::CustomLanguageId())
+					? tr::lng_languages_custom(tr::now)
 					: Lang::GetInstance().name();
 				return Language{
 					current,
@@ -475,7 +475,7 @@ void Rows::addRipple(Selection selected, QPoint position) {
 	const auto menu = v::is<MenuSelection>(selected);
 	const auto &row = rowBySelection(selected);
 	const auto menuArea = menuToggleArea(&row);
-	auto &ripple = rippleBySelection(&row, selected);
+	const auto &ripple = rippleBySelection(&row, selected);
 	const auto topleft = menu ? menuArea.topLeft() : QPoint(0, row.top);
 	ripple->add(position - topleft);
 }
@@ -645,7 +645,7 @@ void Rows::showMenu(int index) {
 void Rows::setForceRippled(not_null<Row*> row, bool rippled) {
 	if (row->menuToggleForceRippled != rippled) {
 		row->menuToggleForceRippled = rippled;
-		auto &ripple = rippleBySelection(row, MenuSelection{});
+		const auto &ripple = rippleBySelection(row, MenuSelection{});
 		if (row->menuToggleForceRippled) {
 			ensureRippleBySelection(row, MenuSelection{});
 			if (ripple->empty()) {
@@ -1493,7 +1493,7 @@ void LanguageBox::prepare() {
 		_1 + _2
 	) | rpl::on_next([=](int height) {
 		accumulate_max(*max, height);
-		setDimensions(st::boxWidth, qMin(*max, st::boxMaxListHeight));
+		setDimensions(st::boxWidth, std::min(*max, st::boxMaxListHeight));
 	}, inner->lifetime());
 	topContainer->heightValue(
 	) | rpl::on_next([=](int height) {

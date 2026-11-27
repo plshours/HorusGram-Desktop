@@ -8,11 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/dialogs_main_list.h"
 
 #include "data/data_changes.h"
-#include "data/data_session.h"
 #include "data/data_chat_filters.h"
-#include "main/main_session.h"
-#include "history/history_unread_things.h"
+#include "data/data_session.h"
 #include "history/history.h"
+#include "history/history_unread_things.h"
+#include "main/main_session.h"
 
 namespace Dialogs {
 
@@ -116,7 +116,13 @@ void MainList::unreadStateChanged(
 		const UnreadState &wasState,
 		const UnreadState &nowState) {
 	const auto useClouded = _cloudUnreadState.known && !loaded();
-	const auto updateCloudUnread = _cloudUnreadState.known && wasState.known;
+	// An entry can go from a known state to an unknown one, for example a
+	// forum channel losing the Forum flag while its own unread count was
+	// not loaded yet. The delta is meaningless then, so leave the cloud
+	// counters alone, like unreadEntryChanged() does.
+	const auto updateCloudUnread = _cloudUnreadState.known
+		&& wasState.known
+		&& nowState.known;
 	const auto notify = !useClouded || wasState.known;
 	const auto notifier = unreadStateChangeNotifier(notify);
 	_unreadState += nowState - wasState;
@@ -125,7 +131,6 @@ void MainList::unreadStateChanged(
 		[[maybe_unused]] int a = 0;
 	}
 	if (updateCloudUnread) {
-		// Assert(nowState.known);
 		_cloudUnreadState += nowState - wasState;
 		finalizeCloudUnread();
 	}

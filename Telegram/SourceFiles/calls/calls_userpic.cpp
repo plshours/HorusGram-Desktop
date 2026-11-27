@@ -7,17 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_userpic.h"
 
-#include "data/data_peer.h"
-#include "main/main_session.h"
+#include "apiwrap.h" // requestFullPeer.
 #include "data/data_changes.h"
-#include "data/data_peer.h"
-#include "data/data_session.h"
 #include "data/data_cloud_file.h"
-#include "data/data_photo_media.h"
 #include "data/data_file_origin.h"
+#include "data/data_peer.h"
+#include "data/data_peer.h"
+#include "data/data_photo_media.h"
+#include "data/data_session.h"
+#include "main/main_session.h"
 #include "ui/empty_userpic.h"
 #include "ui/painter.h"
-#include "apiwrap.h" // requestFullPeer.
+
 #include "styles/style_calls.h"
 
 // HorusGram includes
@@ -188,10 +189,10 @@ void Userpic::createCache(Image *image) {
 		auto width = image->width();
 		auto height = image->height();
 		if (width > height) {
-			width = qMax((width * real) / height, 1);
+			width = std::max((width * real) / height, 1);
 			height = real;
 		} else {
-			height = qMax((height * real) / width, 1);
+			height = std::max((height * real) / width, 1);
 			width = real;
 		}
 		auto result = image->pixNoCache(

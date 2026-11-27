@@ -6,9 +6,10 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/markdown/iv_markdown_view.h"
+
+#include "base/platform/base_platform_info.h"
 #include "base/algorithm.h"
 #include "base/weak_ptr.h"
-#include "base/platform/base_platform_info.h"
 #include "core/click_handler_types.h"
 #include "core/credits_amount.h"
 #include "core/file_utilities.h"
@@ -18,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/markdown/iv_markdown_view_widget.h"
 #include "iv/iv_delegate.h"
 #include "lang/lang_keys.h"
+#include "logs.h"
 #include "ui/controls/jump_down_button.h"
 #include "ui/effects/animations.h"
 #include "ui/layers/generic_box.h"
@@ -25,15 +27,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/style/style_core_scale.h"
 #include "ui/text/text.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/elastic_scroll.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/selecting_scroll.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/integration.h"
 #include "ui/rect.h"
-#include "logs.h"
 
-#include "styles/style_iv.h"
 #include "styles/style_chat_helpers.h"
+#include "styles/style_iv.h"
 #include "styles/style_layers.h"
 #include "styles/style_window.h"
 
@@ -52,7 +54,7 @@ namespace {
 
 constexpr auto kZoomStep = 10;
 
-#ifndef NDEBUG
+#ifdef _DEBUG
 [[nodiscard]] QString PrepareTerminalFailureName(
 		PrepareTerminalFailure failure) {
 	switch (failure) {
@@ -190,10 +192,10 @@ public:
 		MarkdownPreviewScrollMode mode);
 	void scrollToY(int top, MarkdownPreviewScrollMode mode);
 	[[nodiscard]] int scrollTop() const;
-	[[nodiscard]] rpl::producer<int> scrollTopValue() const;
 	bool updateContent(MarkdownArticleContent prepared, OpenOptions options);
 	[[nodiscard]] auto searchSources() const
 	-> std::vector<MarkdownArticleSearchSource>;
+	[[nodiscard]] rpl::producer<> searchSourcesChanges() const;
 	void setSearchMatches(
 		std::vector<MarkdownArticleSearchMatch> matches,
 		int current);
@@ -249,6 +251,8 @@ private:
 	Ui::LinkButton *_failureOpen = nullptr;
 	const std::shared_ptr<MathRenderer> _renderer;
 	std::shared_ptr<MarkdownArticle> _article;
+	rpl::event_stream<> _searchSourcesChanges;
+	rpl::lifetime _articleLifetime;
 	QString _pendingFragment;
 	int _devicePixelRatio = 0;
 	PendingEmbedState _pendingEmbed;
@@ -297,6 +301,9 @@ void MarkdownPreviewRoot::setup() {
 	_scroll->setOverscrollBg(st::windowBg->c);
 	_scrollContent = _scroll->setOwnedWidget(object_ptr<Ui::RpWidget>(_scroll));
 	_body = Ui::CreateChild<MarkdownDocumentWidget>(_scrollContent);
+	Ui::SetupSelectingScroll(_body, [=](int pixels) {
+		_scroll->scrollToY(_scroll->scrollTop() + pixels);
+	});
 	_scrollToTop = Ui::CreateChild<Ui::JumpDownButton>(_scroll, st::dialogsToUp);
 	_scrollToTop->setClickedCallback([=] { scrollToTop(); });
 	_scrollToTop->setAccessibleName(tr::lng_sr_scroll_to_top(tr::now));
@@ -552,6 +559,12 @@ void MarkdownPreviewRoot::activateLink(
 				link.target));
 		}
 		break;
+	case PreparedLinkKind::ToggleBlockquote:
+		if (_body && !_body->toggleBlockquote(link.target)) {
+			DEBUG_LOG(("Native Markdown IV: failed blockquote toggle: %1").arg(
+				link.target));
+		}
+		break;
 	}
 }
 
@@ -608,7 +621,7 @@ bool MarkdownPreviewRoot::showEmbed(const MediaActivation &activation) {
 		|| !activation.placeholderId) {
 		return false;
 	}
-	if (Platform::IsLinux()) {
+	if (Platform::IsWayland()) {
 		closeEmbed();
 		return _embedOverlay
 			? _embedOverlay->showExternalEmbed(activation.embed)
@@ -693,6 +706,7 @@ void MarkdownPreviewRoot::applyPreparedContent(
 	closeEmbed();
 	if (failure.failed()) {
 		_article = nullptr;
+		_articleLifetime.destroy();
 		_footnotes.clear();
 		_scrollToAnimation.stop();
 		startScrollToTopButtonAnimation(false);
@@ -721,6 +735,7 @@ void MarkdownPreviewRoot::applyPreparedContent(
 
 	if (!_body) {
 		_article = nullptr;
+		_articleLifetime.destroy();
 		logPreparationSummary(failure, debug, prepareMs, 0);
 		return;
 	}
@@ -730,6 +745,8 @@ void MarkdownPreviewRoot::applyPreparedContent(
 		_article = std::make_shared<MarkdownArticle>(
 			st::defaultMarkdown,
 			_renderer);
+		_article->searchSourcesChanges(
+		) | rpl::start_to_stream(_searchSourcesChanges, _articleLifetime);
 	}
 	_article->setContent(std::move(prepared));
 	_body->setClickHandlerContext(
@@ -754,10 +771,7 @@ void MarkdownPreviewRoot::applyPreparedContent(
 	_failure->hide();
 	_failureOpen->hide();
 	if (!_pendingFragment.isEmpty()) {
-		const auto scrolled = scrollToAnchor(
-			_pendingFragment,
-			MarkdownPreviewScrollMode::Instant);
-		static_cast<void>(scrolled);
+		scrollToAnchor(_pendingFragment, MarkdownPreviewScrollMode::Instant);
 		_pendingFragment.clear();
 	}
 	_scrollToTop->raise();
@@ -812,17 +826,15 @@ int MarkdownPreviewRoot::scrollTop() const {
 	return _scroll ? _scroll->scrollTop() : 0;
 }
 
-rpl::producer<int> MarkdownPreviewRoot::scrollTopValue() const {
-	return _scroll
-		? _scroll->scrollTopValue()
-		: rpl::single(0) | rpl::type_erased;
-}
-
 auto MarkdownPreviewRoot::searchSources() const
 -> std::vector<MarkdownArticleSearchSource> {
 	return _article
 		? _article->searchSources()
 		: std::vector<MarkdownArticleSearchSource>();
+}
+
+rpl::producer<> MarkdownPreviewRoot::searchSourcesChanges() const {
+	return _searchSourcesChanges.events();
 }
 
 void MarkdownPreviewRoot::setSearchMatches(
@@ -882,17 +894,19 @@ int MarkdownPreviewScrollTop(Ui::RpWidget *preview) {
 	return root ? root->scrollTop() : 0;
 }
 
-rpl::producer<int> MarkdownPreviewScrollTopValue(Ui::RpWidget *preview) {
-	const auto root = dynamic_cast<MarkdownPreviewRoot*>(preview);
-	return root ? root->scrollTopValue() : rpl::single(0);
-}
-
 auto MarkdownPreviewSearchSources(Ui::RpWidget *preview)
 -> std::vector<MarkdownArticleSearchSource> {
 	const auto root = dynamic_cast<MarkdownPreviewRoot*>(preview);
 	return root
 		? root->searchSources()
 		: std::vector<MarkdownArticleSearchSource>();
+}
+
+rpl::producer<> MarkdownPreviewSearchSourcesChanges(Ui::RpWidget *preview) {
+	if (const auto root = dynamic_cast<MarkdownPreviewRoot*>(preview)) {
+		return root->searchSourcesChanges();
+	}
+	return rpl::never<>();
 }
 
 bool ExpandMarkdownPreviewDetails(
@@ -956,7 +970,8 @@ void MarkdownPreviewRoot::scrollToYAnimated(int top) {
 		if (!_scroll) {
 			return;
 		}
-		const auto animated = qRound(_scrollToAnimation.value(scrollTo));
+		const auto animated
+			= int(base::SafeRound(_scrollToAnimation.value(scrollTo)));
 		const auto animatedDelta = animated - scrollTo;
 		const auto realDelta = _scroll->scrollTop() - scrollTo;
 		if (base::OppositeSigns(realDelta, animatedDelta)) {
@@ -1107,7 +1122,7 @@ void MarkdownPreviewRoot::logPreparationSummary(
 		const PrepareDebugStats &debug,
 		int prepareMs,
 		int layoutMs) const {
-#ifndef NDEBUG
+#ifdef _DEBUG
 	const auto counters = _renderer ? _renderer->debugCounters() : FormulaDebugCounters();
 	const auto reason = PrepareFailureReasonText(failure);
 	DEBUG_LOG((

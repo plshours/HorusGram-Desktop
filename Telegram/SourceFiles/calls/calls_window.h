@@ -54,12 +54,16 @@ public:
 	void raiseControls();
 	void setControlsStyle(const style::WindowTitle &st);
 	void setControlsShown(float64 shown);
-	[[nodiscard]] int controlsWrapTop() const;
+	[[nodiscard]] Ui::RpWidget *controlsWrap() const;
 	[[nodiscard]] QRect controlsGeometry() const;
 	[[nodiscard]] auto controlsLayoutChanges() const
 		-> rpl::producer<Ui::Platform::TitleLayout>;
 	[[nodiscard]] bool controlsHasHitTest(QPoint widgetPoint) const;
 	[[nodiscard]] rpl::producer<bool> maximizeRequests() const;
+
+	[[nodiscard]] bool pinnedOnTop() const;
+	void setPinnedOnTop(bool pinned);
+	[[nodiscard]] bool unpinFromTopMaximized();
 
 	void raiseLayers();
 	[[nodiscard]] const Ui::LayerWidget *topShownLayer() const;
@@ -97,10 +101,10 @@ private:
 	Ui::GL::Window _window;
 	const std::unique_ptr<Ui::LayerManager> _layerBg;
 
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	rpl::variable<int> _controlsTop = 0;
 	const std::unique_ptr<Ui::Platform::SeparateTitleControls> _controls;
-#endif // !Q_OS_MAC
+#endif // !Q_OS_MACOS
 
 	std::unique_ptr<base::PowerSaveBlocker> _powerSaveBlocker;
 

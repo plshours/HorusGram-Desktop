@@ -6,6 +6,7 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/markdown/iv_markdown_prepare_blocks.h"
+
 #include "iv/markdown/iv_markdown_prepare_inline.h"
 #include "iv/markdown/iv_markdown_prepare_links.h"
 
@@ -224,6 +225,7 @@ void PrepareTableCellText(
 	block.tableAlignments = NormalizedTableAlignments(node, columnCount);
 	block.tableBordered = true;
 	block.tableStriped = false;
+	block.tableCompact = false;
 	block.tableRows.reserve(node.children.size());
 
 	for (const auto &rowNode : node.children) {

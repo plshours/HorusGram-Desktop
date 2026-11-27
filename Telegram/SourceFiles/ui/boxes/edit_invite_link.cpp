@@ -10,19 +10,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/choose_date_time.h"
+#include "ui/effects/credits_graphics.h"
 #include "ui/layers/generic_box.h"
-#include "ui/vertical_list.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
-#include "ui/widgets/checkbox.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/number_input.h"
-#include "ui/effects/credits_graphics.h"
+#include "ui/widgets/checkbox.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/slide_wrap.h"
-#include "styles/style_settings.h"
-#include "styles/style_layers.h"
+#include "ui/vertical_list.h"
+
 #include "styles/style_info.h"
+#include "styles/style_layers.h"
+#include "styles/style_settings.h"
 
 namespace Ui {
 namespace {
@@ -144,6 +145,10 @@ void EditInviteLinkBox(
 	const auto expireGroup = std::make_shared<RadiobuttonGroup>(expire);
 	const auto usage = data.usageLimit ? data.usageLimit : kMaxLimit;
 	const auto usageGroup = std::make_shared<RadiobuttonGroup>(usage);
+	box->lifetime().add([=] {
+		expireGroup->setChangedCallback(nullptr);
+		usageGroup->setChangedCallback(nullptr);
+	});
 
 	using Buttons = base::flat_map<int, base::unique_qptr<Radiobutton>>;
 	struct State {

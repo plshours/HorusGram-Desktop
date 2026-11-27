@@ -6,9 +6,10 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/markdown/iv_markdown_microtex.h"
+
 #include "base/base_file_utilities.h"
-#include "platform/qt/graphic_qt.h"
 #include "latex.h"
+#include "platform/qt/graphic_qt.h"
 
 #include <QtCore/QSize>
 #include <QtCore/QString>
@@ -23,11 +24,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <mutex>
 #include <utility>
 
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 void InitIvMarkdownMicrotexBundledResource() {
 	Q_INIT_RESOURCE(bundled);
 }
-#endif // !Q_OS_MAC
+#endif // !Q_OS_MACOS
 
 namespace Iv::Markdown {
 namespace {
@@ -167,10 +168,14 @@ struct ParsedMicrotexFormula {
 }
 
 [[nodiscard]] int RoundedLogicalMetric(int scaledValue) {
-	return (scaledValue > 0)
-		? ((scaledValue + kFormulaExactMetricScale - 1)
-			/ kFormulaExactMetricScale)
-		: 0;
+	// int64: the library saturates absurd box sizes at INT_MAX, and adding
+	// the rounding term to that overflows a plain int.
+	const auto rounded = (std::max(scaledValue, 0)
+		+ int64(kFormulaExactMetricScale) - 1)
+		/ kFormulaExactMetricScale;
+	return (rounded > std::numeric_limits<int>::max())
+		? std::numeric_limits<int>::max()
+		: int(rounded);
 }
 
 [[nodiscard]] FormulaExactMetrics ExtractExactMetrics(
@@ -342,15 +347,15 @@ void FinalizeFailure(MeasuredFormula *result) {
 bool EnsureMicrotexInitialized(QString *error) {
 	std::call_once(MicrotexInitOnce, [] {
 		try {
-#ifdef Q_OS_MAC // Use resources from the .app bundle on macOS.
+#ifdef Q_OS_MACOS // Use resources from the .app bundle on macOS.
 
 			base::RegisterBundledResources(u"external_microtex_bundled.rcc"_q);
 
-#else // Q_OS_MAC
+#else // Q_OS_MACOS
 
 			InitIvMarkdownMicrotexBundledResource();
 
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 
 			tex::LaTeX::initBundled();
 			MicrotexInitialized = true;
@@ -424,7 +429,7 @@ MicrotexRenderResult RenderWithMicrotex(const MicrotexRenderRequest &request) {
 	}
 	image.setDevicePixelRatio(request.devicePixelRatio);
 	image.fill(Qt::transparent);
-	{
+	try {
 		QPainter painter(&image);
 		painter.setRenderHint(QPainter::Antialiasing, true);
 		painter.setRenderHint(QPainter::TextAntialiasing, true);
@@ -433,13 +438,20 @@ MicrotexRenderResult RenderWithMicrotex(const MicrotexRenderRequest &request) {
 			1. / double(kFormulaExactMetricScale));
 		tex::Graphics2D_qt graphics(&painter);
 		parsed.render->draw(graphics, 0, 0);
+	} catch (const std::exception &exception) {
+		// The parse path is exception-safe, and a measured-good formula can
+		// still fail here (allocation pressure on ~100k glyph paths), so the
+		// draw gets the same containment as the parse.
+		result.measured.success = false;
+		result.measured.error = ExceptionText(exception);
+		return result;
+	} catch (...) {
+		result.measured.success = false;
+		result.measured.error = u"unknown-exception"_q;
+		return result;
 	}
 	result.image = std::move(image);
 	return result;
-}
-
-bool MicrotexBackendLinked() {
-	return true;
 }
 
 } // namespace Iv::Markdown

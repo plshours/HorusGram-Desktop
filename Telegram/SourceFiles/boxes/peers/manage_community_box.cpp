@@ -17,25 +17,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
-#include "main/main_session.h"
 #include "main/session/session_show.h"
+#include "main/main_session.h"
 #include "settings/settings_common.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/controls/userpic_button.h"
 #include "ui/layers/generic_box.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/labels.h"
+#include "ui/wrap/padding_wrap.h"
+#include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/ui_utility.h"
 #include "ui/userpic_view.h"
 #include "ui/vertical_list.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/labels.h"
-#include "ui/wrap/padding_wrap.h"
-#include "ui/wrap/slide_wrap.h"
-#include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
@@ -141,6 +142,7 @@ void ManageCommunityBox(
 					Ui::PeerUserpicShape::Forum),
 				st::editPeerPhotoMargins));
 		photo = photoWrap->entity();
+		photo->setVideoAllowed(true);
 		photo->showCustomOnChosen();
 		const auto cache = row->lifetime().make_state<
 			Ui::CommunityUserpicEffect>();
@@ -323,10 +325,13 @@ void ManageCommunityBox(
 			if (onlyAdmins != wasOnlyAdmins) {
 				SaveCommunityWhoCanAddChats(community, onlyAdmins);
 			}
-			if (auto image = photo->takeResultImage(); !image.isNull()) {
-				community->session().api().peerPhoto().upload(
-					community,
-					{ std::move(image) });
+			auto image = photo->takeResultImage();
+			auto video = photo->takeResultVideo();
+			if (!image.isNull()) {
+				community->session().api().peerPhoto().upload(community, {
+					.image = std::move(image),
+					.video = std::move(video),
+				});
 			}
 			box->closeBox();
 		});

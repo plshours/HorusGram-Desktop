@@ -7,19 +7,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "calls/calls_panel_background.h"
 
-#include "apiwrap.h"
 #include "api/api_peer_colors.h"
+#include "apiwrap.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_changes.h"
 #include "data/data_document.h"
 #include "data/data_emoji_statuses.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
-#include "data/stickers/data_custom_emoji.h"
 #include "main/main_session.h"
 #include "ui/color_contrast.h"
 #include "ui/top_background_gradient.h"
 
 namespace Calls {
+namespace {
+
+constexpr auto kDarkOverlayOpacity = 0.14;
+constexpr auto kDarkenAboveLightness = 0.3;
+
+} // namespace
 
 PanelBackground::PanelBackground(
 	not_null<PeerData*> peer,
@@ -215,6 +221,13 @@ std::optional<QColor> PanelBackground::textColorOverride(
 		return st::groupCallMembersFg->c;
 	}
 	return std::nullopt;
+}
+
+QColor PanelBackground::cardOverlay() const {
+	const auto base = edgeColor().value_or(st::callBgOpaque->c);
+	return (base.lightnessF() > kDarkenAboveLightness)
+		? QColor(0, 0, 0, anim::interpolate(0, 255, kDarkOverlayOpacity))
+		: st::callIconBg->c;
 }
 
 rpl::lifetime &PanelBackground::lifetime() {

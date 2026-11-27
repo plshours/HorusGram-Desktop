@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "history/history_item_reply_markup.h"
 #include "iv/markdown/iv_markdown_document.h"
 #include "iv/markdown/iv_markdown_math_renderer.h"
-
 #include "ui/text/text_entity.h"
 
 #include <array>
@@ -35,6 +35,7 @@ enum class PreparedBlockKind {
 	Heading,
 	CodeBlock,
 	Rule,
+	ButtonRow,
 	List,
 	ListItem,
 	Quote,
@@ -43,7 +44,7 @@ enum class PreparedBlockKind {
 	Details,
 	Photo,
 	Video,
-	Audio,
+	Document,
 	Map,
 	Channel,
 	GroupedMedia,
@@ -61,6 +62,8 @@ enum class PreparedLinkKind {
 	LocalFile,
 	RejectedRelative,
 	ToggleDetails,
+	ToggleBlockquote,
+	RichPageButton,
 };
 
 struct PreparedLink {
@@ -77,6 +80,7 @@ struct PreparedLink {
 enum class InlineTextObjectKind {
 	Formula,
 	IvImage,
+	Button,
 };
 
 struct InlineTextObjectFormulaData {
@@ -91,11 +95,24 @@ struct InlineTextObjectIvImageData {
 	QString replacementText;
 };
 
+struct InlineTextObjectButtonData {
+	TextWithEntities label;
+	QByteArray data;
+	int64 buttonId = 0;
+	HistoryMessageMarkupButton::Type type
+		= HistoryMessageMarkupButton::Type::Disabled;
+	HistoryMessageMarkupButton::Color color
+		= HistoryMessageMarkupButton::Color::Normal;
+	InlineBots::PeerTypes peerTypes = 0;
+	bool link = false;
+};
+
 struct InlineTextObjectEntity {
 	InlineTextObjectKind kind = InlineTextObjectKind::Formula;
 	std::variant<
 		InlineTextObjectFormulaData,
-		InlineTextObjectIvImageData> data = InlineTextObjectFormulaData();
+		InlineTextObjectIvImageData,
+		InlineTextObjectButtonData> data = InlineTextObjectFormulaData();
 };
 
 enum class PreparedTableCellVerticalAlignment {
@@ -599,7 +616,7 @@ struct PreparedVideoBlockData {
 	bool editMode = false;
 };
 
-struct PreparedAudioBlockData {
+struct PreparedDocumentBlockData {
 	PreparedMediaBlockId id;
 	uint64 documentId = 0;
 	QString title;
@@ -644,11 +661,30 @@ struct PreparedGroupedMediaBlockData {
 	bool editMode = false;
 };
 
+enum class PlaceholderIntent : uchar {
+	EmbedView,
+	UnsupportedBlock,
+};
+
 struct PreparedPlaceholderBlockData {
 	PreparedPlaceholderBlockId id;
+	PlaceholderIntent intent = PlaceholderIntent::EmbedView;
 	QString label;
 	QString copyText;
 	std::optional<EmbedRequest> embed;
+};
+
+struct PreparedButtonRowButton {
+	TextWithEntities text;
+	HistoryMessageMarkupButton button = HistoryMessageMarkupButton(
+		HistoryMessageMarkupButton::Type::Disabled,
+		QString(),
+		{});
+};
+
+struct PreparedButtonRowBlockData {
+	PreparedMediaBlockId id;
+	std::vector<PreparedButtonRowButton> buttons;
 };
 
 struct PreparedRelatedArticleBlockData {
@@ -678,15 +714,17 @@ struct PreparedBlock {
 	QString codeLanguage;
 	QString formulaTex;
 	QString anchorId;
+	QString collapseToggleId;
 	std::vector<QString> anchorIds;
 	PreparedPhotoBlockData photo;
 	PreparedVideoBlockData video;
-	PreparedAudioBlockData audio;
+	PreparedDocumentBlockData document;
 	PreparedMapBlockData map;
 	PreparedChannelBlockData channel;
 	PreparedGroupedMediaBlockData groupedMedia;
 	PreparedEmbedPostBlockData embedPost;
 	PreparedPlaceholderBlockData placeholder;
+	PreparedButtonRowBlockData buttonRow;
 	PreparedRelatedArticleBlockData relatedArticle;
 	ListKind listKind = ListKind::Bullet;
 	ListDelimiter listDelimiter = ListDelimiter::None;
@@ -702,6 +740,7 @@ struct PreparedBlock {
 	int tableColumnCount = 0;
 	bool tableBordered = true;
 	bool tableStriped = false;
+	bool tableCompact = false;
 	bool collapsed = false;
 	bool detailsOpen = false;
 	bool depthClamped = false;
@@ -806,6 +845,20 @@ struct NativeInstantViewPrepareRequest {
 	std::optional<MarkdownPrepareDimensions> dimensionsOverride;
 	std::optional<MarkdownPrepareTableRenderLimits> tableRenderLimits;
 	bool editMode = false;
+	bool unsupportedBlockNotices = false;
+	bool disableButtons = false;
+};
+
+struct PreparedTextReplacement {
+	int position = 0;
+	int skipped = 0;
+	int added = 0;
+};
+
+struct PreparedLinkSplices {
+	const TextWithEntities *source = nullptr;
+	std::vector<PreparedTextReplacement> replacements;
+	std::vector<PreparedTextReplacement> labelDates;
 };
 
 struct MarkdownArticleContent {
@@ -814,6 +867,7 @@ struct MarkdownArticleContent {
 	std::vector<PreparedFormulaSlot> formulas;
 	std::shared_ptr<MediaRuntime> mediaRuntime;
 	std::shared_ptr<const Iv::RichPage> richPage;
+	std::vector<PreparedLinkSplices> linkSplices;
 	bool editMode = false;
 	PrepareFailureStatus failure;
 	PrepareDebugStats debug;
@@ -836,6 +890,7 @@ struct NativeInstantViewPrepareResult {
 		= NativeInstantViewPrepareResultKind::Unsupported;
 	MarkdownArticleContent content;
 	QString debugReason;
+	bool buttonsDisabled = false;
 
 	[[nodiscard]] bool supported() const {
 		return (kind == NativeInstantViewPrepareResultKind::Supported);
@@ -866,6 +921,8 @@ struct NativeInstantViewPrepareResult {
 [[nodiscard]] QString SerializeInlineTextObjectEntity(
 	const InlineTextObjectEntity &object);
 [[nodiscard]] QString InlineFormulaCopySource(const QString &source);
+[[nodiscard]] bool IsQuotableNativeContent(
+	const MarkdownArticleContent &content);
 [[nodiscard]] MarkdownArticleContent PrepareSynchronously(PrepareRequest request);
 [[nodiscard]] NativeInstantViewPrepareResult TryPrepareNativeInstantView(
 	NativeInstantViewPrepareRequest request);

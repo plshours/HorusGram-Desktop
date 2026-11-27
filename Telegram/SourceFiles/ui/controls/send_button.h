@@ -32,6 +32,7 @@ public:
 
 	enum class Type {
 		Send,
+		Stop,
 		Schedule,
 		Save,
 		Record,
@@ -96,6 +97,7 @@ private:
 	void paintSend(QPainter &p, bool over);
 	void paintGraphiteSend(QPainter &p, bool over);
 	void paintGraphiteLaunchAway(QPainter &p);
+	void paintStop(QPainter &p, bool over);
 	void paintSchedule(QPainter &p, bool over);
 	void paintSlowmode(QPainter &p);
 	void paintStarsToSend(QPainter &p, bool over);

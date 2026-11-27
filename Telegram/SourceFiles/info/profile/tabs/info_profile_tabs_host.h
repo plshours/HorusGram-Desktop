@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/object_ptr.h"
 #include "base/flat_map.h"
+#include "base/object_ptr.h"
 #include "base/unique_qptr.h"
 #include "info/profile/tabs/info_profile_tab_content.h"
 #include "ui/rp_widget.h"
@@ -28,6 +28,12 @@ extern const char kOptionProfileMediaTabs[];
 
 class TabsStrip;
 
+struct TabsState {
+	QString activeId;
+	base::flat_map<QString, int> scrollTops;
+	base::flat_map<QString, std::unique_ptr<MediaTabState>> contents;
+};
+
 class TabsHost final : public Ui::RpWidget {
 public:
 	struct Descriptor {
@@ -38,7 +44,6 @@ public:
 	TabsHost(not_null<QWidget*> parent, Descriptor descriptor);
 	~TabsHost();
 
-	[[nodiscard]] rpl::producer<MediaTabContent*> activeTabValue() const;
 	[[nodiscard]] rpl::producer<TabTopBarBindings> activeTabBindings();
 	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> scrollToRequests() const;
 
@@ -59,6 +64,9 @@ public:
 	}
 	void activateTab(const QString &id, bool animated = true);
 	void restoreActiveTab(const QString &id);
+
+	[[nodiscard]] std::unique_ptr<TabsState> saveState();
+	void restoreState(std::unique_ptr<TabsState> state);
 
 	[[nodiscard]] QRect bodyGeometry() const;
 	[[nodiscard]] Fn<void()> prepareSwitch(bool toNextTab);
@@ -92,6 +100,7 @@ private:
 	void scheduleVisibilitySync();
 	void syncBodyNow();
 	void syncHeightNow();
+	void syncStripVisibility();
 	void syncVisibilityNow();
 	void scrollToBodyTop();
 	[[nodiscard]] QRect bodyVisibleRect() const;
@@ -120,6 +129,7 @@ private:
 	QRect _slideRect;
 
 	base::flat_map<QString, std::unique_ptr<MediaTabContent>> _contents;
+	base::flat_map<QString, std::unique_ptr<MediaTabState>> _pendingStates;
 	base::flat_map<QString, int> _tabScrollTops;
 	rpl::event_stream<Ui::ScrollToRequest> _scrollToRequests;
 	QString _activeId;

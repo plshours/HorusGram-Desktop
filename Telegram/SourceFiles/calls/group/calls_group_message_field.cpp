@@ -33,6 +33,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "ui/userpic_view.h"
+
 #include "styles/style_chat_helpers.h"
 #include "styles/style_media_view.h"
 
@@ -209,8 +210,10 @@ void ReactionPanel::create() {
 				_show,
 				PremiumFeature::AnimatedEmoji);
 		} else {
-			_chosen.fire(std::move(reaction));
 			hide();
+			// Fire last: a consumer may synchronously destroy the
+			// MessageField that owns this ReactionPanel.
+			_chosen.fire(std::move(reaction));
 		}
 	}, _selector->lifetime());
 
@@ -374,6 +377,9 @@ void MessageField::createControls(PeerData *peer) {
 
 	_reactionPanel->chosen(
 	) | rpl::on_next([=](Chosen reaction) {
+		// Nothing may touch `this` after the fire below: a consumer of
+		// _submitted destroys this MessageField synchronously when
+		// animations are disabled. ReactionPanel hides itself first.
 		if (const auto customId = reaction.id.custom()) {
 			const auto document = _show->session().data().document(customId);
 			if (const auto sticker = document->sticker()) {
@@ -387,7 +393,6 @@ void MessageField::createControls(PeerData *peer) {
 		} else {
 			_submitted.fire({ reaction.id.emoji() });
 		}
-		_reactionPanel->hide();
 	}, _field->lifetime());
 
 	const auto show = _show;

@@ -126,7 +126,6 @@ public:
 
 	[[nodiscard]] auto loadingList() const
 		-> ranges::any_view<const DownloadingId*, ranges::category::input>;
-	[[nodiscard]] DownloadProgress loadingProgress() const;
 	[[nodiscard]] rpl::producer<> loadingListChanges() const;
 	[[nodiscard]] auto loadingProgressValue() const
 		-> rpl::producer<DownloadProgress>;
@@ -165,7 +164,7 @@ private:
 		-> std::pair<SessionData*, std::vector<DownloadingId>::iterator>;
 	void changed(not_null<const HistoryItem*> item);
 	void removed(not_null<const HistoryItem*> item);
-	void detach(DownloadedId &id);
+	void detach(SessionData &data, DownloadedId &id);
 	void untrack(not_null<Main::Session*> session);
 	void remove(
 		SessionData &data,

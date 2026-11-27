@@ -7,40 +7,41 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "api/api_bot.h"
 
-#include "apiwrap.h"
 #include "api/api_cloud_password.h"
 #include "api/api_send_progress.h"
 #include "api/api_suggest_post.h"
+#include "apiwrap.h"
 #include "boxes/peers/choose_peer_box.h"
 #include "boxes/peers/create_managed_bot_box.h"
 #include "boxes/passcode_box.h"
 #include "boxes/share_box.h"
 #include "boxes/url_auth_box.h"
-#include "lang/lang_keys.h"
 #include "chat_helpers/bot_command.h"
-#include "core/core_cloud_password.h"
 #include "core/click_handler_types.h"
+#include "core/core_cloud_password.h"
 #include "data/components/ephemeral_messages.h"
 #include "data/data_changes.h"
 #include "data/data_peer.h"
 #include "data/data_poll.h"
-#include "data/data_user.h"
 #include "data/data_session.h"
+#include "data/data_user.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_components.h"
 #include "inline_bots/bot_attach_web_view.h"
-#include "payments/payments_checkout_process.h"
-#include "payments/payments_non_panel_process.h"
+#include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
-#include "window/window_session_controller.h"
-#include "window/window_peer_menu.h"
+#include "payments/payments_checkout_process.h"
+#include "payments/payments_non_panel_process.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/toast/toast.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
+#include "ui/toast/toast.h"
+#include "window/window_peer_menu.h"
+#include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 
@@ -58,8 +59,7 @@ namespace {
 void SendBotCallbackData(
 		not_null<Window::SessionController*> controller,
 		not_null<HistoryItem*> item,
-		int row,
-		int column,
+		BotButtonLookup lookup,
 		std::optional<Core::CloudPasswordResult> password,
 		Fn<void()> done = nullptr,
 		Fn<void(const QString &)> handleError = nullptr) {
@@ -72,10 +72,7 @@ void SendBotCallbackData(
 	const auto api = &session->api();
 	const auto bot = item->getMessageBot();
 	const auto fullId = item->fullId();
-	const auto getButton = [=] {
-		return HistoryMessageMarkupButton::Get(owner, fullId, row, column);
-	};
-	const auto button = getButton();
+	const auto button = lookup();
 	if (!button || button->requestId) {
 		return;
 	}
@@ -96,13 +93,13 @@ void SendBotCallbackData(
 	if (withPassword) {
 		flags |= MTPmessages_GetBotCallbackAnswer::Flag::f_password;
 	}
-	const auto ephemeralId = item->isEphemeral()
-		? session->ephemeralMessages().lookupId(item)
-		: 0;
-	if (item->isEphemeral() && (!ephemeralId || isGame || withPassword)) {
+	const auto ephemeralId = session->ephemeralMessages().lookupId(item);
+	if (item->isEphemeral() && !ephemeralId) {
+		return;
+	} else if (ephemeralId && (isGame || withPassword)) {
 		return;
 	}
-	if (ephemeralId) {
+	if (item->isEphemeral()) {
 		session->ephemeralMessages().noteCallbackTopic(
 			history,
 			item->from()->id,
@@ -121,7 +118,7 @@ void SendBotCallbackData(
 		if (!item) {
 			return;
 		}
-		if (const auto button = getButton()) {
+		if (const auto button = lookup()) {
 			button->requestId = 0;
 			owner->requestItemRepaint(item);
 		}
@@ -173,7 +170,7 @@ void SendBotCallbackData(
 			return;
 		}
 		// Show error?
-		if (const auto button = getButton()) {
+		if (const auto button = lookup()) {
 			button->requestId = 0;
 			owner->requestItemRepaint(item);
 		}
@@ -212,16 +209,14 @@ void HideSingleUseKeyboard(
 void SendBotCallbackData(
 		not_null<Window::SessionController*> controller,
 		not_null<HistoryItem*> item,
-		int row,
-		int column) {
-	SendBotCallbackData(controller, item, row, column, std::nullopt);
+		BotButtonLookup lookup) {
+	SendBotCallbackData(controller, item, std::move(lookup), std::nullopt);
 }
 
 void SendBotCallbackDataWithPassword(
 		not_null<Window::SessionController*> controller,
 		not_null<HistoryItem*> item,
-		int row,
-		int column) {
+		BotButtonLookup lookup) {
 	if (!item->isRegular()) {
 		return;
 	}
@@ -230,21 +225,13 @@ void SendBotCallbackDataWithPassword(
 	const auto owner = &history->owner();
 	const auto api = &session->api();
 	const auto fullId = item->fullId();
-	const auto getButton = [=] {
-		return HistoryMessageMarkupButton::Get(
-			owner,
-			fullId,
-			row,
-			column);
-	};
-	const auto button = getButton();
-	if (!button || button->requestId) {
+	if (const auto button = lookup(); !button || button->requestId) {
 		return;
 	}
 	api->cloudPassword().reload();
 	const auto weak = base::make_weak(controller);
 	const auto show = controller->uiShow();
-	SendBotCallbackData(controller, item, row, column, {}, {}, [=](
+	SendBotCallbackData(controller, item, lookup, {}, {}, [=](
 			const QString &error) {
 		auto box = PrePasswordErrorBox(
 			error,
@@ -256,7 +243,9 @@ void SendBotCallbackDataWithPassword(
 			show->showBox(std::move(box), Ui::LayerOption::CloseOther);
 		} else {
 			auto lifetime = std::make_shared<rpl::lifetime>();
-			button->requestId = -1;
+			if (const auto button = lookup()) {
+				button->requestId = -1;
+			}
 			api->cloudPassword().state(
 			) | rpl::take(
 				1
@@ -264,7 +253,7 @@ void SendBotCallbackDataWithPassword(
 				if (lifetime) {
 					base::take(lifetime)->destroy();
 				}
-				if (const auto button = getButton()) {
+				if (const auto button = lookup()) {
 					if (button->requestId == -1) {
 						button->requestId = 0;
 					}
@@ -279,7 +268,7 @@ void SendBotCallbackDataWithPassword(
 				fields.customCheckCallback = [=](
 						const Core::CloudPasswordResult &result,
 						base::weak_qptr<PasscodeBox> box) {
-					if (const auto button = getButton()) {
+					if (const auto button = lookup()) {
 						if (button->requestId) {
 							return;
 						}
@@ -291,15 +280,21 @@ void SendBotCallbackDataWithPassword(
 						if (!strongController) {
 							return;
 						}
-						SendBotCallbackData(strongController, item, row, column, result, [=] {
-							if (box) {
-								box->closeBox();
-							}
-						}, [=](const QString &error) {
-							if (box) {
-								box->handleCustomCheckError(error);
-							}
-						});
+						SendBotCallbackData(
+							strongController,
+							item,
+							lookup,
+							result,
+							[=] {
+								if (box) {
+									box->closeBox();
+								}
+							},
+							[=](const QString &error) {
+								if (box) {
+									box->handleCustomCheckError(error);
+								}
+							});
 					}
 				};
 				auto object = Box<PasscodeBox>(session, fields);
@@ -320,7 +315,7 @@ bool SwitchInlineBotButtonReceived(
 		samePeerReplyTo);
 }
 
-void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
+void ActivateBotButton(ClickHandlerContext context, BotButtonLookup lookup) {
 	const auto strong = context.sessionWindow.get();
 	if (!strong) {
 		return;
@@ -330,11 +325,7 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 	if (!item) {
 		return;
 	}
-	const auto button = HistoryMessageMarkupButton::Get(
-		&item->history()->owner(),
-		item->fullId(),
-		row,
-		column);
+	const auto button = lookup();
 	if (!button) {
 		return;
 	}
@@ -357,11 +348,11 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 
 	case ButtonType::Callback:
 	case ButtonType::Game: {
-		SendBotCallbackData(controller, item, row, column);
+		SendBotCallbackData(controller, item, lookup);
 	} break;
 
 	case ButtonType::CallbackWithPassword: {
-		SendBotCallbackDataWithPassword(controller, item, row, column);
+		SendBotCallbackDataWithPassword(controller, item, lookup);
 	} break;
 
 	case ButtonType::Buy: {
@@ -490,7 +481,8 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 						bot,
 						item->id);
 					return true;
-				} else if (bot->isBot() && bot->botInfo->inlineReturnTo.key) {
+				} else if (bot->isBot()
+					&& bot->botInfo->inlineReturnTo().key) {
 					const auto switched = SwitchInlineBotButtonReceived(
 						controller,
 						button->data);
@@ -519,7 +511,7 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 	} break;
 
 	case ButtonType::Auth:
-		UrlAuthBox::ActivateButton(controller->uiShow(), item, row, column);
+		UrlAuthBox::ActivateButton(controller->uiShow(), item, lookup);
 		break;
 
 	case ButtonType::UserProfile: {
@@ -563,6 +555,8 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 			});
 		}
 	} break;
+
+	case ButtonType::Disabled: break;
 
 	case ButtonType::SuggestAccept: {
 		Api::AcceptClickHandler(item)->onClick(ClickContext{
@@ -638,6 +632,42 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 		});
 	} break;
 	}
+}
+
+void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
+	const auto strong = context.sessionWindow.get();
+	if (!strong) {
+		return;
+	}
+	const auto owner = &strong->session().data();
+	const auto itemId = context.itemId;
+	ActivateBotButton(context, [=] {
+		return HistoryMessageMarkupButton::Get(owner, itemId, row, column);
+	});
+}
+
+void ActivateRichPageBotButton(
+		ClickHandlerContext context,
+		const HistoryMessageMarkupButton &button) {
+	const auto strong = context.sessionWindow.get();
+	if (!strong) {
+		return;
+	}
+	const auto owner = &strong->session().data();
+	const auto itemId = context.itemId;
+	const auto key = HistoryMessageMarkupButton::RegisterRichPageButton(
+		owner,
+		itemId,
+		button);
+	if (key.isEmpty()) {
+		return;
+	}
+	ActivateBotButton(context, [=] {
+		return HistoryMessageMarkupButton::GetRichPageButton(
+			owner,
+			itemId,
+			key);
+	});
 }
 
 } // namespace Api

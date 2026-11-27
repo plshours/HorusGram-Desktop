@@ -8,30 +8,29 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_search.h"
 
 #include "base/event_filter.h"
+#include "core/deep_links/deep_links_settings.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
-#include "core/deep_links/deep_links_settings.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "settings/settings_builder.h"
 #include "settings/settings_common.h"
 #include "settings/settings_faq_suggestions.h"
 #include "settings/settings_recent_searches.h"
-#include "ui/painter.h"
 #include "ui/text/text_entity.h"
 #include "ui/toast/toast.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/wrap/vertical_layout.h"
+#include "ui/painter.h"
 #include "ui/search_field_controller.h"
 #include "ui/vertical_list.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/popup_menu.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/labels.h"
-#include "ui/wrap/padding_wrap.h"
-#include "ui/wrap/vertical_layout.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat_helpers.h"
-#include "styles/style_info.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_settings.h"
 #include "styles/style_widgets.h"
@@ -122,9 +121,13 @@ void SetupCheckIcon(
 		subtitle,
 		st::settingsSearchResultDetails);
 	details->show();
-	details->moveToLeft(
-		st.padding.left(),
-		st.padding.top() + st.height - details->height());
+	button->widthValue() | rpl::on_next([=](int width) {
+		const auto available = width - st.padding.left() - st.padding.right();
+		details->resizeToWidth(std::min(details->textMaxWidth(), available));
+		details->moveToLeft(
+			st.padding.left(),
+			st.padding.top() + st.height - details->height());
+	}, details->lifetime());
 	details->setAttribute(Qt::WA_TransparentForMouseEvents);
 	return button;
 }
@@ -150,29 +153,15 @@ void Search::setInnerFocus() {
 
 base::weak_qptr<Ui::RpWidget> Search::createPinnedToTop(
 		not_null<QWidget*> parent) {
-	_searchController = std::make_unique<Ui::SearchFieldController>("");
-	auto rowView = _searchController->createRowView(
-		parent,
-		st::infoLayerMediaSearch);
-	_searchField = rowView.field;
+	auto search = CreateSectionSearchRow(parent);
+	_searchController = std::move(search.controller);
+	const auto row = search.row;
+	_searchField = search.field;
 	_searchField->customUpDown(true);
-
-	const auto searchContainer = Ui::CreateChild<Ui::FixedHeightWidget>(
-		parent.get(),
-		st::infoLayerMediaSearch.height);
-	const auto wrap = rowView.wrap.release();
-	wrap->setParent(searchContainer);
-	wrap->show();
-
-	searchContainer->widthValue(
-	) | rpl::on_next([=](int width) {
-		wrap->resizeToWidth(width);
-		wrap->moveToLeft(0, 0);
-	}, searchContainer->lifetime());
 
 	_searchController->queryChanges() | rpl::on_next([=](QString &&query) {
 		rebuildResults(std::move(query));
-	}, searchContainer->lifetime());
+	}, row->lifetime());
 
 	_searchField->submits(
 	) | rpl::on_next([=](Qt::KeyboardModifiers) {
@@ -182,7 +171,7 @@ base::weak_qptr<Ui::RpWidget> Search::createPinnedToTop(
 				Qt::NoModifier,
 				Qt::LeftButton);
 		}
-	}, searchContainer->lifetime());
+	}, row->lifetime());
 
 	base::install_event_filter(_searchField, [=](not_null<QEvent*> e) {
 		if (e->type() != QEvent::KeyPress) {
@@ -203,7 +192,7 @@ base::weak_qptr<Ui::RpWidget> Search::createPinnedToTop(
 		_searchField->setText(base::take(_pendingQuery));
 	}
 
-	return base::make_weak(not_null<Ui::RpWidget*>{ searchContainer });
+	return base::make_weak(row);
 }
 
 void Search::setupContent() {

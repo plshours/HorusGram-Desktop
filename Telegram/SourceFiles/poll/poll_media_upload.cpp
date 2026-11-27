@@ -25,11 +25,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
 #include "ui/chat/attach/attach_prepare.h"
-#include "ui/dynamic_thumbnails.h"
 #include "ui/effects/ripple_animation.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/dynamic_thumbnails.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
-#include "ui/widgets/fields/input_field.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_overview.h"
 #include "styles/style_polls.h"
@@ -445,6 +446,7 @@ PollMediaUploader::PollMediaUploader(Args &&args)
 : _session(args.session)
 , _peer(args.peer)
 , _showError(std::move(args.showError))
+, _api(&_session->mtp())
 , _prepareQueue(std::make_unique<TaskQueue>()) {
 	subscribeToUploader();
 }
@@ -452,7 +454,7 @@ PollMediaUploader::PollMediaUploader(Args &&args)
 PollMediaUploader::~PollMediaUploader() = default;
 
 void PollMediaUploader::subscribeToUploader() {
-	auto &uploader = _session->uploader();
+	const auto &uploader = _session->uploader();
 
 	uploader.photoReady(
 	) | rpl::on_next([=](const Storage::UploadedMedia &data) {
@@ -624,7 +626,7 @@ void PollMediaUploader::applyUploaded(
 		MTP_vector<MTPInputDocument>(QVector<MTPInputDocument>()),
 		MTPint(),
 		MTPInputDocument());
-	_session->api().request(MTPmessages_UploadMedia(
+	_api.request(MTPmessages_UploadMedia(
 		MTP_flags(0),
 		MTPstring(),
 		_peer->input(),
@@ -680,7 +682,7 @@ void PollMediaUploader::applyUploadedDocument(
 		MTPInputPhoto(),
 		MTP_int(0),
 		MTP_int(0));
-	_session->api().request(MTPmessages_UploadMedia(
+	_api.request(MTPmessages_UploadMedia(
 		MTP_flags(0),
 		MTPstring(),
 		_peer->input(),

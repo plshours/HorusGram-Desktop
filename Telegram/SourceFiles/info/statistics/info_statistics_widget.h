@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "info/info_content_widget.h"
 #include "info/statistics/info_statistics_common.h"
+#include "info/info_content_widget.h"
 
 namespace Info::Statistics {
 
@@ -44,6 +44,8 @@ public:
 	rpl::producer<QString> title() override;
 	rpl::producer<bool> desiredShadowVisibility() const override;
 	void showFinished() override;
+	void fillTopBarMenu(const Ui::Menu::MenuCallback &addAction) override;
+	[[nodiscard]] rpl::producer<> topBarMenuFilledChanges() const override;
 
 	void setInternalState(
 		const QRect &geometry,

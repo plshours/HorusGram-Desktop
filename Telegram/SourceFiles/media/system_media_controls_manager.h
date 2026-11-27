@@ -42,18 +42,21 @@ public:
 		not_null<SystemMediaControlsVideoDelegate*> delegate,
 		VideoState state) override;
 	void videoUpdate(VideoState state) override;
+	void videoSeeked() override;
 	void videoSetThumbnail(const QImage &thumbnail) override;
 	void videoFinish(
 		not_null<SystemMediaControlsVideoDelegate*> delegate) override;
 
 private:
 	[[nodiscard]] float64 lookupPlaybackRate() const;
+	void applyAudioPlaybackSpeed(float64 speed);
 	void applyPlayerTrack(AudioMsgId::Type audioType);
 	void syncPlayerStateToControls();
+	void syncLoopAndShuffleToControls();
 
 	const std::unique_ptr<base::Platform::SystemMediaControls> _controls;
 
-	std::vector<std::shared_ptr<Data::DocumentMedia>> _cachedMediaView;
+	std::shared_ptr<Data::DocumentMedia> _cachedMediaView;
 	Ui::PeerUserpicView _cachedUserpicView;
 	std::unique_ptr<Streaming::Instance> _streamed;
 	AudioMsgId _lastAudioMsgId;

@@ -7,30 +7,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/admin_log/history_admin_log_item.h"
 
+#include "api/api_chat_participants.h"
+#include "api/api_text_entities.h"
+#include "base/unixtime.h"
+#include "boxes/sticker_set_box.h"
+#include "core/application.h"
+#include "core/click_handler_types.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "data/data_channel.h"
+#include "data/data_file_origin.h"
+#include "data/data_forum_topic.h"
+#include "data/data_message_reaction_id.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
 #include "history/admin_log/history_admin_log_inner.h"
 #include "history/view/history_view_element.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
 #include "history/history_location_manager.h"
-#include "api/api_chat_participants.h"
-#include "api/api_text_entities.h"
-#include "data/data_channel.h"
-#include "data/data_file_origin.h"
-#include "data/data_forum_topic.h"
-#include "data/data_user.h"
-#include "data/data_session.h"
-#include "data/data_message_reaction_id.h"
-#include "data/stickers/data_custom_emoji.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/basic_click_handlers.h"
-#include "boxes/sticker_set_box.h"
-#include "base/unixtime.h"
-#include "core/application.h"
-#include "core/click_handler_types.h"
-#include "main/main_session.h"
 #include "window/notifications_manager.h"
 #include "window/window_session_controller.h"
 
@@ -100,7 +100,8 @@ std::optional<MTPMessageReplyHeader> PrepareLogReply(
 					| Flag::f_quote
 					| Flag::f_quote_entities
 					| Flag::f_quote_offset
-					| Flag::f_quote_text;
+					| Flag::f_quote_text
+					| Flag::f_quote_rich;
 				return MTP_messageReplyHeader(
 					MTP_flags((data.vflags().v & ~removeFlags)
 						| Flag::f_reply_to_msg_id),
@@ -113,7 +114,8 @@ std::optional<MTPMessageReplyHeader> PrepareLogReply(
 					MTPVector<MTPMessageEntity>(), // quote_entities
 					MTPint(), // quote_offset
 					MTPint(), // todo_item_id
-					MTPbytes()); // poll_option
+					MTPbytes(), // poll_option
+					MTPVector<MTPRichText>()); // quote_rich
 			}
 		}
 		return {};
@@ -226,12 +228,17 @@ uint64 MediaId(const MTPMessage &message) {
 	if (!MediaCanHaveCaption(message)) {
 		return 0;
 	}
-	const auto &media = message.c_message().vmedia();
-	return media
-		? v::match(
-			Data::GetFileReferences(*media).data.begin()->first,
-			[](const auto &d) { return d.id; })
-		: 0;
+	const auto media = message.c_message().vmedia();
+	if (!media) {
+		return 0;
+	}
+	const auto references = Data::GetFileReferences(*media);
+	if (references.data.empty()) {
+		return 0;
+	}
+	return v::match(
+		references.data.begin()->first,
+		[](const auto &data) { return data.id; });
 }
 
 TextWithEntities ExtractEditedText(
@@ -299,6 +306,10 @@ TextWithEntities GenerateAdminChangeText(
 		{ Flag::ManageCall, tr::lng_admin_log_admin_manage_calls },
 		{ Flag::ManageDirect, tr::lng_admin_log_admin_manage_direct },
 		{ Flag::ManageRanks, tr::lng_admin_log_admin_manage_ranks },
+		{
+			Flag::ManageWelcomeMessages,
+			tr::lng_admin_log_admin_manage_welcome_messages,
+		},
 		{ Flag::AddAdmins, tr::lng_admin_log_admin_add_admins },
 		{ Flag::Anonymous, tr::lng_admin_log_admin_remain_anonymous },
 	};
@@ -780,8 +791,18 @@ OwnedItem::OwnedItem(OwnedItem &&other)
 }
 
 OwnedItem &OwnedItem::operator=(OwnedItem &&other) {
-	_data = base::take(other._data);
-	_view = base::take(other._view);
+	if (this != &other) {
+		// destroy() is synchronous and fires itemRemoved, so both members
+		// must already hold the incoming values when it runs. Assigning
+		// _view also destroys the outgoing view, which ~Element requires
+		// to happen before the item it points to is destroyed.
+		const auto old = base::take(_data);
+		_data = base::take(other._data);
+		_view = base::take(other._view);
+		if (old) {
+			old->destroy();
+		}
+	}
 	return *this;
 }
 
@@ -1381,14 +1402,11 @@ void GenerateItems(
 	const auto createChangeLocation = [&](const LogLocation &action) {
 		action.vnew_value().match([&](const MTPDchannelLocation &data) {
 			const auto address = qs(data.vaddress());
-			const auto link = data.vgeo_point().match([&](
-					const MTPDgeoPoint &data) {
-				return tr::link(
-					address,
-					LocationClickHandler::Url(Data::LocationPoint(data)));
-			}, [&](const MTPDgeoPointEmpty &) {
-				return TextWithEntities{ .text = address };
-			});
+			const auto point = Data::LocationPoint::FromMTP(
+				data.vgeo_point());
+			const auto link = point
+				? tr::link(address, LocationClickHandler::Url(*point))
+				: tr::marked(address);
 			const auto text = tr::lng_admin_log_changed_location_chat(
 				tr::now,
 				lt_from,
@@ -1976,7 +1994,7 @@ void GenerateItems(
 		const auto nextColor = (now.type() == mtpc_peerColor)
 			? now.c_peerColor().vcolor()
 			: tl::conditional<MTPint>();
-		if (prevColor != nextColor) {
+		if (prevColor.value_or(-1) != nextColor.value_or(-1)) {
 			const auto wrap = [&](tl::conditional<MTPint> value) {
 				return value
 					? value->v

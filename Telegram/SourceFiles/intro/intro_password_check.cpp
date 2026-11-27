@@ -7,19 +7,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_password_check.h"
 
-#include "intro/intro_widget.h"
-#include "core/core_cloud_password.h"
-#include "ui/boxes/confirm_box.h"
+#include "base/random.h"
 #include "boxes/abstract_box.h"
 #include "boxes/passcode_box.h"
-#include "lang/lang_keys.h"
+#include "core/core_cloud_password.h"
 #include "intro/intro_signup.h"
+#include "intro/intro_widget.h"
+#include "lang/lang_keys.h"
+#include "main/main_account.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/text/text_utilities.h"
-#include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/password_input.h"
-#include "main/main_account.h"
-#include "base/random.h"
+#include "ui/widgets/buttons.h"
+
 #include "styles/style_intro.h"
 #include "styles/style_hoursgram_design.h"
 #include "hoursgram/customization/intro_look.h"
@@ -68,6 +69,10 @@ PasswordCheckWidget::PasswordCheckWidget(
 	_codeField->changes(
 	) | rpl::on_next([=] {
 		hideError();
+	}, _codeField->lifetime());
+	_codeField->submits(
+	) | rpl::on_next([=] {
+		submit();
 	}, _codeField->lifetime());
 
 	setTitleText(tr::lng_signin_title());
@@ -260,6 +265,15 @@ void PasswordCheckWidget::requestPasswordData() {
 }
 
 void PasswordCheckWidget::passwordChecked() {
+	if (!_passwordState.mtp.request) {
+		if (_passwordState.mtp.unknownAlgorithm) {
+			// Switched to an algorithm this build cannot compute.
+			return serverError();
+		}
+		// The password was removed after this step was created, which is the
+		// same situation the PASSWORD_EMPTY error reports.
+		return goBack();
+	}
 	const auto check = Core::ComputeCloudPasswordCheck(
 		_passwordState.mtp.request,
 		_passwordHash);
@@ -465,6 +479,9 @@ void PasswordCheckWidget::submit() {
 	} else {
 		hideError();
 
+		if (!_passwordState.mtp.request) {
+			return serverError();
+		}
 		const auto password = _pwdField->getLastText().toUtf8();
 		_passwordHash = Core::ComputeCloudPasswordHash(
 			_passwordState.mtp.request.algo,

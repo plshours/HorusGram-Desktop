@@ -110,7 +110,7 @@ CreatingKeyType Dcenter::acquireKeyCreation(DcType type) {
 	QReadLocker lock(&_mutex);
 	const auto keyType = TemporaryKeyTypeByDcType(type);
 	const auto index = IndexByType(keyType);
-	auto &key = _temporaryKeys[index];
+	const auto &key = _temporaryKeys[index];
 	if (key != nullptr) {
 		return CreatingKeyType::None;
 	}
@@ -132,18 +132,19 @@ bool Dcenter::releaseKeyCreationOnDone(
 		CreatingKeyType type,
 		const AuthKeyPtr &temporaryKey,
 		const AuthKeyPtr &persistentKeyUsedForBind) {
-	Expects(_creatingKeys[IndexByType(type)]);
-	Expects(_temporaryKeys[IndexByType(type)] == nullptr);
+	const auto index = IndexByType(type);
+	Expects(_creatingKeys[index]);
 	Expects(temporaryKey != nullptr);
 
 	QWriteLocker lock(&_mutex);
+	Expects(_temporaryKeys[index] == nullptr);
+	_creatingKeys[index] = false;
 	if (type == CreatingKeyType::Persistent) {
 		_persistentKey = persistentKeyUsedForBind;
 	} else if (_persistentKey != persistentKeyUsedForBind) {
 		return false;
 	}
-	_temporaryKeys[IndexByType(type)] = temporaryKey;
-	_creatingKeys[IndexByType(type)] = false;
+	_temporaryKeys[index] = temporaryKey;
 	_connectionInited = false;
 
 	DEBUG_LOG(("AuthKey Info: Dcenter::releaseKeyCreationOnDone(%1, %2, %3)."
@@ -156,10 +157,12 @@ bool Dcenter::releaseKeyCreationOnDone(
 }
 
 void Dcenter::releaseKeyCreationOnFail(CreatingKeyType type) {
-	Expects(_creatingKeys[IndexByType(type)]);
-	Expects(_temporaryKeys[IndexByType(type)] == nullptr);
+	const auto index = IndexByType(type);
+	Expects(_creatingKeys[index]);
 
-	_creatingKeys[IndexByType(type)] = false;
+	QReadLocker lock(&_mutex);
+	Expects(_temporaryKeys[index] == nullptr);
+	_creatingKeys[index] = false;
 }
 
 } // namespace details

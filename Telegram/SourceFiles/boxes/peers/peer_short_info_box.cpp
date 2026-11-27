@@ -16,18 +16,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/streaming/media_streaming_player.h"
 #include "ui/effects/radial_animation.h"
 #include "ui/image/image_prepare.h"
-#include "ui/painter.h"
 #include "ui/text/text_utilities.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/wrap.h"
+#include "ui/painter.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
@@ -287,8 +288,9 @@ void PeerShortInfoCover::paintBars(QPainter &p) {
 	for (auto i = 0; i != _count; ++i) {
 		const auto left = start + i * (single + skip);
 		const auto right = left + single;
-		const auto x = qRound(left);
-		const auto small = (qRound(right) == qRound(left) + _smallWidth);
+		const auto x = int(base::SafeRound(left));
+		const auto small = (int(base::SafeRound(right))
+			== int(base::SafeRound(left)) + _smallWidth);
 		const auto width = small ? _smallWidth : _largeWidth;
 		const auto &image = small ? _barSmall : _barLarge;
 		const auto min = 2 * ((_st.line + 1) / 2);
@@ -306,7 +308,7 @@ void PeerShortInfoCover::paintBars(QPainter &p) {
 			p.setOpacity(inactiveOpacity);
 			p.drawImage(x, y, image);
 			if (progress > 0.) {
-				const auto paint = qRound(progress * width);
+				const auto paint = int(base::SafeRound(progress * width));
 				const auto right = paint / 2;
 				const auto left = paint - right;
 				p.setOpacity(masterOpacity);
@@ -620,6 +622,12 @@ void PeerShortInfoCover::refreshBarImages() {
 }
 
 void PeerShortInfoCover::refreshLabelsGeometry() {
+	const auto statusWidth = _st.size - _st.statusPosition.x();
+	_name->resizeToWidth(_st.size - _st.namePosition.x());
+	_status->resizeToWidth(statusWidth);
+	if (_additionalStatus) {
+		_additionalStatus->resizeToWidth(statusWidth);
+	}
 	const auto statusTop = _st.size
 		- _st.statusPosition.y()
 		- _status->height();
