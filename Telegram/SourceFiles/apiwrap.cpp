@@ -4003,7 +4003,7 @@ FullMsgId ApiWrap::forwardMessages(
 		crl::async([=] {
 			AyuForward::forwardMessages(_session, action, false, draft);
 		});
-		return;
+		return FullMsgId();
 	}
 
 	const auto ayuIntelligentForwardNeeded = AyuForward::isAyuForwardNeeded(draft.items);
@@ -4011,7 +4011,7 @@ FullMsgId ApiWrap::forwardMessages(
 		crl::async([=] {
 			AyuForward::intelligentForward(_session, action, draft);
 		});
-		return;
+		return FullMsgId();
 	}
 
 	auto &histories = _session->data().histories();

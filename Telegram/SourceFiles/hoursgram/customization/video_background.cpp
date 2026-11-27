@@ -98,7 +98,10 @@ bool Decoder::open() {
 		return false;
 	}
 	const auto stream = raw->streams[_index];
-	_codec = MakeCodecPointer({ .stream = stream });
+	_codec = MakeCodecPointer({
+		.parameters = stream->codecpar,
+		.timeBase = stream->time_base,
+	});
 	if (!_codec) {
 		return false;
 	}

@@ -638,32 +638,6 @@ HistoryItem::HistoryItem(
 		createComponents(data);
 		if (media) {
 			setMedia(*media);
-			if (checked == MediaCheckResult::HasUnsupportedTimeToLive) {
-				media->match(
-					[&](const MTPDmessageMediaPhoto &media)
-					{
-						if (!data.is_media_unread()) {
-							createServiceFromMtp(data);
-							skipSetText = true;
-						}
-
-						const auto time = media.vttl_seconds()->v;
-						setAyuHint(formatTTL(time, false));
-						_unsupportedTTL = time;
-					},
-					[&](const MTPDmessageMediaDocument &media)
-					{
-						if (!data.is_media_unread()) {
-							createServiceFromMtp(data);
-							skipSetText = true;
-						}
-
-						const auto time = media.vttl_seconds()->v;
-						setAyuHint(formatTTL(time, true));
-						_unsupportedTTL = time;
-					},
-					[](const auto &) {});
-			}
 		}
 		if (const auto media = _media.get()) {
 			if (media->ttlSeconds()
@@ -2908,9 +2882,9 @@ void HistoryItem::applySentMessage(const MTPDmessage &data) {
 		_flags &= ~MessageFlag::InvertMedia;
 	}
 	if (data.is_noforwards()) {
-		_flags |= MessageFlag::NoForwards;
+		_flags |= MessageFlag::AyuNoForwards;
 	} else {
-		_flags &= ~MessageFlag::NoForwards;
+		_flags &= ~MessageFlag::AyuNoForwards;
 	}
 
 	const auto wasTypes = sharedMediaTypes();

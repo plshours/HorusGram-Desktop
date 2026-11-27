@@ -570,7 +570,7 @@ void SearchMusic(
 		MTP_int(0),
 		MTP_int(kSearchLimit)
 	)).done([=](const MTPmessages_Messages &result) {
-		const auto parsed = Api::ParseGlobalMediaResult(session, result);
+		const auto parsed = Api::ParseGlobalMediaResult(session, result, false);
 		auto ids = std::vector<FullMsgId>();
 		ids.reserve(parsed.messageIds.size());
 		for (const auto &position : parsed.messageIds) {

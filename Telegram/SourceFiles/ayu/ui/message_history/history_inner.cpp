@@ -511,6 +511,10 @@ HistoryView::Context InnerWidget::elementContext() {
 	return HistoryView::Context::AdminLog;
 }
 
+HistoryView::GramReadLine *InnerWidget::elementGramReadLine() {
+	return nullptr;
+}
+
 bool InnerWidget::elementUnderCursor(
 	not_null<const HistoryView::Element*> view) {
 	return (Element::Hovered() == view);

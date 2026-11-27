@@ -87,6 +87,7 @@ public:
 
 	// HistoryView::ElementDelegate interface.
 	HistoryView::Context elementContext() override;
+	HistoryView::GramReadLine *elementGramReadLine() override;
 	bool elementUnderCursor(
 		not_null<const HistoryView::Element*> view) override;
 	HistoryView::SelectionModeResult elementInSelectionMode(const HistoryView::Element *) override;

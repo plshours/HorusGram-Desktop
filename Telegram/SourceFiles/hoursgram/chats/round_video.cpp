@@ -177,7 +177,10 @@ bool Converter::openInput() {
 	}
 	const auto videoStream = raw->streams[_videoIndex];
 	_rotation = ReadRotationFromMetadata(videoStream);
-	_videoDecoder = MakeCodecPointer({ .stream = videoStream });
+	_videoDecoder = MakeCodecPointer({
+		.parameters = videoStream->codecpar,
+		.timeBase = videoStream->time_base,
+	});
 	if (!_videoDecoder) {
 		return false;
 	}
@@ -189,7 +192,10 @@ bool Converter::openInput() {
 		nullptr,
 		0);
 	if (_audioIndex >= 0) {
-		_audioDecoder = MakeCodecPointer({ .stream = raw->streams[_audioIndex] });
+		_audioDecoder = MakeCodecPointer({
+			.parameters = raw->streams[_audioIndex]->codecpar,
+			.timeBase = raw->streams[_audioIndex]->time_base,
+		});
 		if (!_audioDecoder) {
 			_audioIndex = -1;
 		}
@@ -533,6 +539,7 @@ void SendRoundFromFile(
 						VoiceWaveform(),
 						converted.duration,
 						true,
+						nullptr,
 						Api::SendAction(history));
 				});
 			});

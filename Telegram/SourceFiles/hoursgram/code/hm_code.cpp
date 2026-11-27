@@ -186,7 +186,7 @@ void Editor::createWebview() {
 
 	// The page itself stays in place; any link it opens goes to the
 	// usual browser of the system.
-	raw->setNavigationStartHandler([=](const QString &uri, bool newWindow) {
+	raw->setNavigationPolicyHandler([=](QString uri, bool newWindow) {
 		// The page has the key of the assistant and the files of the
 		// project, so nothing else may ever open in its place.
 		if (!newWindow && (IsOwnPage(uri) || uri == u"about:blank"_q)) {
