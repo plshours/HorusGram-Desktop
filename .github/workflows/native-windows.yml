@@ -211,10 +211,10 @@ jobs:
             !out/**/*.ilk
             !out/**/*.iobj
             !out/**/*.ipdb
-          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-
-            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+            ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-
+            ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-main-
 
       # A fresh checkout dates every source file now, later than any restored
       # object file, so MSBuild would rebuild everything. Files whose content
@@ -364,7 +364,7 @@ jobs:
             !out/**/*.ilk
             !out/**/*.iobj
             !out/**/*.ipdb
-          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
 
       # The repository has 10 GB of cache in all. Build outputs of other
       # branches and of older cache versions pushed the dependencies or this
@@ -379,8 +379,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_CACHE_KEY: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
-          MAIN_CACHE_PREFIX: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+          CURRENT_CACHE_KEY: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          MAIN_CACHE_PREFIX: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-main-
         run: |
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"
