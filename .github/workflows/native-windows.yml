@@ -101,7 +101,8 @@ jobs:
         id: prepare-dependencies
         shell: cmd
         # Qt 6 is the only Qt prepare.py builds now, it takes no qt6 argument.
-        run: Telegram\build\prepare\win.bat skip-release silent
+        # No skip-release: this build is Release, Telegram CI builds Debug.
+        run: Telegram\build\prepare\win.bat silent
 
       # The libraries cache was 10 GB, all the cache a repository gets, so it
       # was pushed out right after it was saved and every run built Qt,
