@@ -8,10 +8,50 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "editor/photo_editor_common.h"
 
 #include "editor/scene/scene.h"
+#include "editor/scene/scene_item_animated.h"
+#include "editor/video/video_clip.h"
+#include "editor/editor_enhance.h"
 #include "ui/painter.h"
 #include "ui/userpic_view.h"
 
 namespace Editor {
+namespace {
+
+constexpr auto kAnimatedMaxSide = 854;
+constexpr auto kAnimatedFps = 30.;
+constexpr auto kAnimatedMinDuration = crl::time(1000);
+
+[[nodiscard]] QImage ExpandCanvas(
+		const QImage &image,
+		QRect crop,
+		Scene *scene = nullptr) {
+	auto result = QImage(crop.size(), QImage::Format_ARGB32_Premultiplied);
+	result.fill(Qt::transparent);
+
+	auto p = Painter(&result);
+	p.setCompositionMode(QPainter::CompositionMode_Source);
+	p.drawImage(-crop.topLeft(), image);
+	if (scene) {
+		p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+		PainterHighQualityEnabler hq(p);
+		scene->renderBaked(&p, QRectF(result.rect()), QRectF(crop));
+	}
+	return result;
+}
+
+void FillCanvasBackground(
+		QImage &canvas,
+		const Media::Encode::CanvasBackground &background,
+		QRect keep = QRect()) {
+	auto p = QPainter(&canvas);
+	p.setCompositionMode(QPainter::CompositionMode_DestinationOver);
+	if (!keep.isEmpty()) {
+		p.setClipRegion(QRegion(canvas.rect()) - QRegion(keep));
+	}
+	Media::Encode::PaintCanvasBackground(p, canvas.rect(), background);
+}
+
+} // namespace
 
 void ApplyShapeMask(QImage &image, const PhotoModifications &mods) {
 	if (mods.cropMode != EditorData::CropMode::Mask) {
@@ -53,6 +93,7 @@ void ApplyShapeMask(QImage &image, const PhotoModifications &mods) {
 
 float64 RoundedCornersMultiplier(RoundedCornersLevel level) {
 	switch (level) {
+	case RoundedCornersLevel::Circle: return 0.5;
 	case RoundedCornersLevel::Large: return Ui::ForumUserpicRadiusMultiplier();
 	case RoundedCornersLevel::Medium: return 0.2;
 	case RoundedCornersLevel::Small: return 0.12;
@@ -67,7 +108,12 @@ QImage ImageModified(QImage image, const PhotoModifications &mods) {
 	if (!mods) {
 		return image;
 	}
-	if (mods.paint) {
+	if (mods.enhance > 0) {
+		image = EnhanceImage(std::move(image), mods.enhance);
+	}
+	const auto expanded = mods.crop.isValid()
+		&& !image.rect().contains(mods.crop);
+	if (mods.paint && !expanded) {
 		if (image.format() != QImage::Format_ARGB32_Premultiplied) {
 			image = image.convertToFormat(
 				QImage::Format_ARGB32_Premultiplied);
@@ -76,9 +122,11 @@ QImage ImageModified(QImage image, const PhotoModifications &mods) {
 		Painter p(&image);
 		PainterHighQualityEnabler hq(p);
 
-		mods.paint->render(&p, image.rect());
+		mods.paint->renderBaked(&p, image.rect());
 	}
-	auto cropped = mods.crop.isValid()
+	auto cropped = expanded
+		? ExpandCanvas(image, mods.crop, mods.paint.get())
+		: mods.crop.isValid()
 		? image.copy(mods.crop)
 		: image;
 	QTransform transform;
@@ -88,11 +136,191 @@ QImage ImageModified(QImage image, const PhotoModifications &mods) {
 	if (mods.angle) {
 		transform.rotate(mods.angle);
 	}
-	return cropped.transformed(transform);
+	auto result = cropped.transformed(transform);
+	if (expanded) {
+		const auto matrix = QImage::trueMatrix(
+			transform,
+			cropped.width(),
+			cropped.height());
+		FillCanvasBackground(
+			result,
+			Media::Encode::DominantCanvasBackground(image),
+			matrix.mapRect(QRect(-mods.crop.topLeft(), image.size())));
+	}
+	return result;
+}
+
+Media::Encode::Job ComposeAnimatedJob(
+		const QImage &image,
+		const PhotoModifications &mods,
+		ComposeAnimatedOptions options) {
+	Expects(mods.paint != nullptr);
+	Expects(!image.isNull());
+
+	const auto maxSide = options.maxSide
+		? float64(options.maxSide)
+		: kAnimatedMaxSide;
+	const auto maxDuration = options.maxDuration
+		? options.maxDuration
+		: crl::time(0);
+
+	const auto scene = mods.paint.get();
+	const auto crop = mods.crop.isValid()
+		? mods.crop
+		: QRect(QPoint(), image.size());
+	auto transform = QTransform();
+	if (mods.flipped) {
+		transform.scale(-1, 1);
+	}
+	if (mods.angle) {
+		transform.rotate(mods.angle);
+	}
+	const auto matrix = QImage::trueMatrix(
+		transform,
+		crop.width(),
+		crop.height());
+	const auto rotated = matrix.mapRect(
+		QRectF(QPointF(), QSizeF(crop.size()))).size();
+	if (rotated.isEmpty()) {
+		return {};
+	}
+	const auto fit = std::min({
+		maxSide / rotated.width(),
+		maxSide / rotated.height(),
+		1.,
+	});
+	const auto target = QSize(
+		std::max(int(rotated.width() * fit) & ~1, 2),
+		std::max(int(rotated.height() * fit) & ~1, 2));
+	const auto sceneToCanvas = QTransform::fromTranslate(
+		-crop.x(),
+		-crop.y()
+	) * matrix * QTransform::fromScale(
+		target.width() / rotated.width(),
+		target.height() / rotated.height());
+
+	const auto bake = [&](const QImage &canvas) {
+		return canvas.transformed(transform, Qt::SmoothTransformation)
+			.scaled(
+				target,
+				Qt::IgnoreAspectRatio,
+				Qt::SmoothTransformation);
+	};
+
+	auto job = Media::Encode::Job();
+	const auto items = scene->items(Qt::AscendingOrder);
+	auto normal = std::vector<NumberedItem*>();
+	for (const auto &item : items) {
+		if (item->isNormalStatus()) {
+			normal.push_back(item.get());
+		}
+	}
+	ranges::stable_sort(normal, ranges::less(), &QGraphicsItem::zValue);
+	auto run = std::vector<NumberedItem*>();
+	const auto flushRun = [&] {
+		if (run.empty()) {
+			return;
+		}
+		for (const auto item : normal) {
+			item->setVisible(false);
+		}
+		for (const auto item : run) {
+			item->setVisible(true);
+		}
+		auto layer = QImage(
+			crop.size(),
+			QImage::Format_ARGB32_Premultiplied);
+		layer.fill(Qt::transparent);
+		{
+			auto p = Painter(&layer);
+			PainterHighQualityEnabler hq(p);
+			scene->renderBaked(&p, QRectF(layer.rect()), QRectF(crop));
+		}
+		for (const auto item : normal) {
+			item->setVisible(true);
+		}
+		job.overlay.push_back(bake(layer));
+		run.clear();
+	};
+
+	auto longest = crl::time(0);
+	auto music = std::vector<Media::Encode::MusicTrack>();
+	for (const auto item : normal) {
+		const auto animated = item->asAnimated();
+		if (!animated || !animated->animated()) {
+			run.push_back(item);
+			continue;
+		}
+		auto entity = animated->animatedEntity(sceneToCanvas);
+		if (entity.bytes.isEmpty() && entity.path.isEmpty()) {
+			run.push_back(item);
+			continue;
+		}
+		flushRun();
+		const auto clip = item->videoClip();
+		if (entity.round && !clip) {
+			music.push_back({
+				.path = entity.path,
+				.bytes = entity.bytes });
+		}
+		const auto loop = animated->loopDuration();
+		if (clip && (loop > 0)) {
+			entity.till = entity.from + loop;
+		}
+		if (clip && clip->sounding()) {
+			const auto trim = clip->trim();
+			music.push_back({
+				.path = entity.path,
+				.bytes = entity.bytes,
+				.from = trim.from,
+				.till = trim.from + loop,
+				.volume = clip->volume(),
+				.loop = true,
+			});
+		}
+		job.overlay.push_back(std::move(entity));
+		longest = std::max(longest, loop);
+	}
+	flushRun();
+
+	if (const auto audio = scene->audio()) {
+		if (audio->volume > 0.) {
+			music.push_back({
+				.path = audio->path,
+				.bytes = audio->content,
+				.from = audio->from,
+				.till = (audio->till > audio->from) ? audio->till : 0,
+				.volume = audio->volume,
+			});
+		}
+		longest = std::max(longest, audio->length());
+	}
+	auto base = bake(ExpandCanvas(image, crop));
+	FillCanvasBackground(
+		base,
+		Media::Encode::DominantCanvasBackground(image));
+	job.source = Media::Encode::StillSource{
+		.base = std::move(base),
+		.duration = maxDuration
+			? std::clamp(longest, kAnimatedMinDuration, maxDuration)
+			: std::max(longest, kAnimatedMinDuration),
+		.fps = kAnimatedFps,
+		.music = std::move(music),
+	};
+	job.silentLoop = true;
+	return job;
 }
 
 bool PhotoModifications::empty() const {
-	return !angle && !flipped && !crop.isValid() && !paint;
+	const auto hasPaint = paint
+		&& (paint->audio()
+			|| ranges::any_of(paint->items(), &NumberedItem::isNormalStatus));
+	return !angle
+		&& !flipped
+		&& !crop.isValid()
+		&& !hasPaint
+		&& canvasMediaRect.isEmpty()
+		&& !enhance;
 }
 
 PhotoModifications::operator bool() const {

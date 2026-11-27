@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/rp_widget.h"
 #include "base/object_ptr.h"
+#include "ui/rp_widget.h"
 
 namespace Ui {
 class MaskedInputField;
@@ -35,6 +35,7 @@ struct EditContactScheme {
 	QString newHeader;
 	rpl::producer<QString> newPlaceholder;
 	QString aboutNew;
+	Qt::InputMethodHints inputHints;
 	Fn<bool(const QString &value)> validate;
 	Fn<QString(const QString &value)> format;
 	Fn<QString(const QString &value)> postprocess;

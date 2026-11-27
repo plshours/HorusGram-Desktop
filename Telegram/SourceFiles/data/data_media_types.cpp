@@ -7,43 +7,73 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_media_types.h"
 
+#include "api/api_sending.h"
+#include "api/api_transcribes.h"
+#include "apiwrap.h"
 #include "base/random.h"
 #include "boxes/send_credits_box.h" // CreditsEmoji.
+#include "calls/calls_instance.h"
+#include "chat_helpers/stickers_dice_pack.h" // Stickers::DicePacks::IsSlot.
+#include "chat_helpers/stickers_gift_box_pack.h"
+#include "core/application.h"
+#include "core/click_handler_types.h" // ClickHandlerContext
+#include "data/components/credits.h"
+#include "data/data_auto_download.h"
+#include "data/data_channel.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_file_origin.h"
+#include "data/data_game.h"
+#include "data/data_photo.h"
+#include "data/data_photo_media.h"
+#include "data/data_poll.h"
+#include "data/data_session.h"
+#include "data/data_stories.h"
+#include "data/data_story.h"
+#include "data/data_todo_list.h"
+#include "data/data_user.h"
+#include "data/data_web_page.h"
+#include "dialogs/ui/dialogs_message_view.h"
+#include "history/view/media/history_view_birthday_suggestion.h"
+#include "history/view/media/history_view_call.h"
+#include "history/view/media/history_view_contact.h"
+#include "history/view/media/history_view_dice.h"
+#include "history/view/media/history_view_document.h"
+#include "history/view/media/history_view_game.h"
+#include "history/view/media/history_view_gif.h"
+#include "history/view/media/history_view_giveaway.h"
+#include "history/view/media/history_view_invoice.h"
+#include "history/view/media/history_view_location.h"
+#include "history/view/media/history_view_media_generic.h"
+#include "history/view/media/history_view_media_grouped.h"
+#include "history/view/media/history_view_photo.h"
+#include "history/view/media/history_view_poll.h"
+#include "history/view/media/history_view_premium_gift.h"
+#include "history/view/media/history_view_service_box.h"
+#include "history/view/media/history_view_slot_machine.h"
+#include "history/view/media/history_view_sticker.h"
+#include "history/view/media/history_view_story_mention.h"
+#include "history/view/media/history_view_theme_document.h"
+#include "history/view/media/history_view_todo_list.h"
+#include "history/view/media/history_view_unique_gift.h"
+#include "history/view/media/history_view_userpic_suggestion.h"
+#include "history/view/media/history_view_web_page.h"
+#include "history/view/history_view_element.h"
+#include "history/view/history_view_item_preview.h"
 #include "history/history.h"
 #include "history/history_item.h" // CreateMedia.
 #include "history/history_item_components.h"
 #include "history/history_location_manager.h"
-#include "history/view/history_view_element.h"
-#include "history/view/history_view_item_preview.h"
-#include "history/view/media/history_view_birthday_suggestion.h"
-#include "history/view/media/history_view_photo.h"
-#include "history/view/media/history_view_sticker.h"
-#include "history/view/media/history_view_gif.h"
-#include "history/view/media/history_view_document.h"
-#include "history/view/media/history_view_contact.h"
-#include "history/view/media/history_view_location.h"
-#include "history/view/media/history_view_game.h"
-#include "history/view/media/history_view_giveaway.h"
-#include "history/view/media/history_view_invoice.h"
-#include "history/view/media/history_view_media_generic.h"
-#include "history/view/media/history_view_media_grouped.h"
-#include "history/view/media/history_view_call.h"
-#include "history/view/media/history_view_web_page.h"
-#include "history/view/media/history_view_poll.h"
-#include "history/view/media/history_view_theme_document.h"
-#include "history/view/media/history_view_todo_list.h"
-#include "history/view/media/history_view_slot_machine.h"
-#include "history/view/media/history_view_dice.h"
-#include "history/view/media/history_view_service_box.h"
-#include "history/view/media/history_view_story_mention.h"
-#include "history/view/media/history_view_premium_gift.h"
-#include "history/view/media/history_view_unique_gift.h"
-#include "history/view/media/history_view_userpic_suggestion.h"
-#include "dialogs/ui/dialogs_message_view.h"
+#include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "main/main_session_settings.h"
+#include "storage/file_upload.h"
+#include "storage/localstorage.h"
+#include "storage/storage_shared_media.h"
 #include "ui/boxes/emoji_stake_box.h"
 #include "ui/controls/ton_common.h"
-#include "ui/image/image.h"
 #include "ui/effects/spoiler_mess.h"
+#include "ui/image/image.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_entity.h"
@@ -51,37 +81,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/emoji_config.h"
-#include "api/api_sending.h"
-#include "api/api_transcribes.h"
-#include "storage/storage_shared_media.h"
-#include "storage/localstorage.h"
-#include "chat_helpers/stickers_dice_pack.h" // Stickers::DicePacks::IsSlot.
-#include "chat_helpers/stickers_gift_box_pack.h"
-#include "data/components/credits.h"
-#include "data/data_session.h"
-#include "data/data_auto_download.h"
-#include "data/data_photo.h"
-#include "data/data_photo_media.h"
-#include "data/data_document.h"
-#include "data/data_document_media.h"
-#include "data/data_game.h"
-#include "data/data_web_page.h"
-#include "data/data_poll.h"
-#include "data/data_channel.h"
-#include "data/data_file_origin.h"
-#include "data/data_stories.h"
-#include "data/data_story.h"
-#include "data/data_todo_list.h"
-#include "data/data_user.h"
-#include "main/main_session.h"
-#include "main/main_session_settings.h"
-#include "calls/calls_instance.h"
-#include "core/application.h"
-#include "core/click_handler_types.h" // ClickHandlerContext
-#include "lang/lang_keys.h"
-#include "storage/file_upload.h"
 #include "window/window_session_controller.h" // SessionController::uiShow.
-#include "apiwrap.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_dialogs.h"
 
@@ -364,7 +365,10 @@ bool UpdateExtendedMedia(
 			photo->setExtendedMediaPreview(size, thumbnail, videoDuration);
 		}
 		if (!media) {
-			media = std::make_unique<MediaPhoto>(item, photo, true);
+			media = std::make_unique<MediaPhoto>(
+				item,
+				photo,
+				MediaPhoto::Args{ .spoiler = true });
 		}
 		return changed;
 	}, [&](const MTPDmessageExtendedMedia &data) {
@@ -380,11 +384,18 @@ bool UpdateExtendedMedia(
 	auto changed = false;
 	const auto count = int(media.size());
 	for (auto i = 0; i != count; ++i) {
-		if (i <= invoice.extendedMedia.size()) {
+		if (i == invoice.extendedMedia.size()) {
 			invoice.extendedMedia.emplace_back();
 			changed = true;
 		}
-		UpdateExtendedMedia(invoice.extendedMedia[i], item, media[i]);
+		changed = UpdateExtendedMedia(
+			invoice.extendedMedia[i],
+			item,
+			media[i]) || changed;
+		if (!invoice.extendedMedia[i]) {
+			invoice.extendedMedia.clear();
+			return true;
+		}
 	}
 	if (count < invoice.extendedMedia.size()) {
 		invoice.extendedMedia.resize(count);
@@ -767,8 +778,16 @@ bool Media::hasSpoiler() const {
 	return false;
 }
 
+bool Media::hasSpoilerForPreview() const {
+	return hasSpoiler() || ttlSeconds();
+}
+
 crl::time Media::ttlSeconds() const {
 	return 0;
+}
+
+bool Media::ttlSecondsSingleView() const {
+	return (ttlSeconds() == kTimeToLiveSingleView);
 }
 
 bool Media::consumeMessageText(const TextWithEntities &text) {
@@ -842,10 +861,11 @@ ItemPreview Media::toGroupPreview(
 MediaPhoto::MediaPhoto(
 	not_null<HistoryItem*> parent,
 	not_null<PhotoData*> photo,
-	bool spoiler)
+	Args &&args)
 : Media(parent)
 , _photo(photo)
-, _spoiler(spoiler) {
+, _ttlSeconds(args.ttlSeconds)
+, _spoiler(args.spoiler) {
 	parent->history()->owner().registerPhotoItem(_photo, parent);
 
 	if (_spoiler) {
@@ -873,7 +893,10 @@ MediaPhoto::~MediaPhoto() {
 std::unique_ptr<Media> MediaPhoto::clone(not_null<HistoryItem*> parent) {
 	return _chat
 		? std::make_unique<MediaPhoto>(parent, _chat, _photo)
-		: std::make_unique<MediaPhoto>(parent, _photo, _spoiler);
+		: std::make_unique<MediaPhoto>(parent, _photo, Args{
+			.ttlSeconds = _ttlSeconds,
+			.spoiler = _spoiler,
+		});
 }
 
 PhotoData *MediaPhoto::photo() const {
@@ -888,6 +911,8 @@ Storage::SharedMediaTypesMask MediaPhoto::sharedMediaTypes() const {
 	using Type = Storage::SharedMediaType;
 	if (_chat) {
 		return Type::ChatPhoto;
+	} else if (ttlSeconds()) {
+		return {};
 	}
 	return Storage::SharedMediaTypesMask{}
 		.added(Type::Photo)
@@ -907,13 +932,16 @@ Image *MediaPhoto::replyPreview() const {
 }
 
 bool MediaPhoto::replyPreviewLoaded() const {
-	return _photo->replyPreviewLoaded(_spoiler);
+	return _photo->replyPreviewLoaded(hasSpoilerForPreview());
 }
 
 TextWithEntities MediaPhoto::notificationText() const {
+	const auto ttl = ttlSeconds();
 	return WithCaptionNotificationText(
-		tr::lng_in_dlg_photo(tr::now),
-		parent()->originalText());
+		(ttl
+			? tr::lng_in_dlg_photo_ttl
+			: tr::lng_in_dlg_photo)(tr::now),
+		ttl ? TextWithEntities() : parent()->originalText());
 }
 
 ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
@@ -929,11 +957,12 @@ ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
 	const auto radius = _chat
 		? ImageRoundRadius::Ellipse
 		: ImageRoundRadius::Small;
+	const auto spoilered = hasSpoilerForPreview();
 	if (auto found = FindCachedPreview(
 			options.existing,
 			_photo,
 			radius,
-			_spoiler)) {
+			spoilered)) {
 		images.push_back(std::move(found));
 	} else {
 		const auto media = _photo->createMediaView();
@@ -941,7 +970,7 @@ ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
 				parent(),
 				media,
 				radius,
-				_spoiler)
+				spoilered)
 			; prepared || !prepared.cacheKey) {
 			images.push_back(std::move(prepared));
 			if (!prepared.cacheKey) {
@@ -949,8 +978,12 @@ ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
 			}
 		}
 	}
-	const auto type = tr::lng_in_dlg_photo(tr::now);
-	const auto caption = (options.hideCaption || options.ignoreMessageText)
+	const auto type = ttlSeconds()
+		? tr::lng_in_dlg_photo_ttl(tr::now)
+		: tr::lng_in_dlg_photo(tr::now);
+	const auto caption = (options.hideCaption
+		|| options.ignoreMessageText
+		|| ttlSeconds())
 		? TextWithEntities()
 		: Dialogs::Ui::DialogsPreviewText(options.translated
 			? parent()->translatedText()
@@ -976,11 +1009,19 @@ bool MediaPhoto::allowsEditCaption() const {
 }
 
 bool MediaPhoto::allowsEditMedia() const {
-	return true;
+	return !ttlSeconds();
 }
 
 bool MediaPhoto::hasSpoiler() const {
 	return _spoiler;
+}
+
+crl::time MediaPhoto::ttlSeconds() const {
+	return _ttlSeconds;
+}
+
+bool MediaPhoto::allowsForward() const {
+	return !ttlSeconds();
 }
 
 bool MediaPhoto::updateInlineResultMedia(const MTPMessageMedia &media) {
@@ -989,7 +1030,7 @@ bool MediaPhoto::updateInlineResultMedia(const MTPMessageMedia &media) {
 	}
 	const auto &data = media.c_messageMediaPhoto();
 	const auto content = data.vphoto();
-	if (content && !data.vttl_seconds()) {
+	if (content) {
 		const auto photo = parent()->history()->owner().processPhoto(
 			*content);
 		if (photo == _photo) {
@@ -1000,7 +1041,7 @@ bool MediaPhoto::updateInlineResultMedia(const MTPMessageMedia &media) {
 	} else {
 		LOG(("API Error: "
 			"Got MTPMessageMediaPhoto without photo "
-			"or with ttl_seconds in updateInlineResultMedia()"));
+			"in updateInlineResultMedia()"));
 	}
 	return false;
 }
@@ -1011,10 +1052,10 @@ bool MediaPhoto::updateSentMedia(const MTPMessageMedia &media) {
 	}
 	const auto &mediaPhoto = media.c_messageMediaPhoto();
 	const auto content = mediaPhoto.vphoto();
-	if (!content || mediaPhoto.vttl_seconds()) {
+	if (!content) {
 		LOG(("Api Error: "
 			"Got MTPMessageMediaPhoto without photo "
-			"or with ttl_seconds in updateSentMedia()"));
+			"in updateSentMedia()"));
 		return false;
 	}
 	parent()->history()->owner().photoConvert(_photo, *content);
@@ -1062,6 +1103,10 @@ MediaFile::MediaFile(
 , _hasQualitiesList(args.hasQualitiesList)
 , _spoiler(args.spoiler) {
 	parent->history()->owner().registerDocumentItem(_document, parent);
+
+	if (_ttlSeconds) {
+		_document->setForbidsFileSave();
+	}
 
 	if (!_emoji.isEmpty()) {
 		if (const auto emoji = Ui::Emoji::Find(_emoji)) {
@@ -1158,7 +1203,7 @@ Image *MediaFile::replyPreview() const {
 }
 
 bool MediaFile::replyPreviewLoaded() const {
-	return _document->replyPreviewLoaded(_spoiler);
+	return _document->replyPreviewLoaded(hasSpoilerForPreview());
 }
 
 ItemPreview MediaFile::toPreview(ToPreviewOptions options) const {
@@ -1175,8 +1220,7 @@ ItemPreview MediaFile::toPreview(ToPreviewOptions options) const {
 	auto images = std::vector<ItemPreviewImage>();
 	auto context = std::any();
 	const auto existing = options.existing;
-	const auto spoilered = _spoiler
-		|| (_document->isVideoMessage() && ttlSeconds());
+	const auto spoilered = hasSpoilerForPreview();
 	const auto radius = _document->isVideoMessage()
 		? ImageRoundRadius::Ellipse
 		: ImageRoundRadius::Small;
@@ -1231,7 +1275,9 @@ ItemPreview MediaFile::toPreview(ToPreviewOptions options) const {
 		} else if (_document->isAnimation()) {
 			return WithEntities(u"GIF"_q);
 		} else if (_document->isVideoFile()) {
-			return WithEntities(tr::lng_in_dlg_video(tr::now));
+			return WithEntities((item->media() && item->media()->ttlSeconds())
+				? tr::lng_in_dlg_video_ttl(tr::now)
+				: tr::lng_in_dlg_video(tr::now));
 		} else if (_document->isVoiceMessage()) {
 			if (item->media() && item->media()->ttlSeconds()) {
 				return WithEntities(
@@ -1260,7 +1306,9 @@ ItemPreview MediaFile::toPreview(ToPreviewOptions options) const {
 	if (typeIcon && images.empty()) {
 		type = Ui::Text::IconEmoji(typeIcon).append(std::move(type));
 	}
-	const auto caption = (options.hideCaption || options.ignoreMessageText)
+	const auto caption = (options.hideCaption
+		|| options.ignoreMessageText
+		|| ttlSeconds())
 		? TextWithEntities()
 		: Dialogs::Ui::DialogsPreviewText(options.translated
 			? parent()->translatedText()
@@ -1289,7 +1337,10 @@ TextWithEntities MediaFile::notificationText() const {
 		} else if (_document->isAnimation()) {
 			return u"GIF"_q;
 		} else if (_document->isVideoFile()) {
-			return tr::lng_in_dlg_video(tr::now);
+			const auto media = parent()->media();
+			return (media && media->ttlSeconds())
+				? tr::lng_in_dlg_video_ttl(tr::now)
+				: tr::lng_in_dlg_video(tr::now);
 		} else if (_document->isVoiceMessage()) {
 			const auto media = parent()->media();
 			return (media && media->ttlSeconds())
@@ -1302,7 +1353,9 @@ TextWithEntities MediaFile::notificationText() const {
 		}
 		return tr::lng_in_dlg_file(tr::now);
 	}();
-	return WithCaptionNotificationText(type, parent()->originalText());
+	return WithCaptionNotificationText(
+		type,
+		ttlSeconds() ? TextWithEntities() : parent()->originalText());
 }
 
 QString MediaFile::pinnedTextSubstring() const {
@@ -1361,7 +1414,8 @@ bool MediaFile::allowsEditCaption() const {
 bool MediaFile::allowsEditMedia() const {
 	return !_document->isVideoMessage()
 		&& !_document->sticker()
-		&& !_document->isVoiceMessage();
+		&& !_document->isVoiceMessage()
+		&& !ttlSeconds();
 }
 
 bool MediaFile::forwardedBecomesUnread() const {
@@ -1392,7 +1446,7 @@ bool MediaFile::updateInlineResultMedia(const MTPMessageMedia &media) {
 	}
 	const auto &data = media.c_messageMediaDocument();
 	const auto content = data.vdocument();
-	if (content && !data.vttl_seconds()) {
+	if (content) {
 		const auto document = parent()->history()->owner().processDocument(
 			*content);
 		if (document == _document) {
@@ -1403,7 +1457,7 @@ bool MediaFile::updateInlineResultMedia(const MTPMessageMedia &media) {
 	} else {
 		LOG(("API Error: "
 			"Got MTPMessageMediaDocument without document "
-			"or with ttl_seconds in updateInlineResultMedia()"));
+			"in updateInlineResultMedia()"));
 	}
 	return false;
 }
@@ -1414,10 +1468,10 @@ bool MediaFile::updateSentMedia(const MTPMessageMedia &media) {
 	}
 	const auto &data = media.c_messageMediaDocument();
 	const auto content = data.vdocument();
-	if (!content || data.vttl_seconds()) {
+	if (!content) {
 		LOG(("Api Error: "
 			"Got MTPMessageMediaDocument without document "
-			"or with ttl_seconds in updateSentMedia()"));
+			"in updateSentMedia()"));
 		return false;
 	}
 	const auto owner = &parent()->history()->owner();
@@ -1804,10 +1858,17 @@ const Call *MediaCall::call() const {
 }
 
 ItemPreview MediaCall::toPreview(ToPreviewOptions options) const {
+	const auto out = parent()->out();
+	const auto icon = _call.video
+		? (out
+			? &st::dialogsMiniVideoCallOutgoingIcon
+			: &st::dialogsMiniVideoCallIncomingIcon)
+		: (out
+			? &st::dialogsMiniCallOutgoingIcon
+			: &st::dialogsMiniCallIncomingIcon);
 	return {
-		.text = Ui::Text::IconEmoji(
-			&st::dialogsMiniCallIcon
-		).append(notificationText()),
+		.text = Ui::Text::Colorized(
+			Ui::Text::IconEmoji(icon).append(notificationText())),
 	};
 }
 
@@ -2336,7 +2397,8 @@ std::unique_ptr<HistoryView::Media> MediaInvoice::createView(
 			message,
 			realParent,
 			replacing);
-	} else if (!_invoice.extendedMedia.empty()) {
+	} else if (!_invoice.extendedMedia.empty()
+		&& ranges::all_of(_invoice.extendedMedia, &Media::canBeGrouped)) {
 		return std::make_unique<HistoryView::GroupedMedia>(
 			message,
 			_invoice.extendedMedia);
@@ -2795,19 +2857,31 @@ std::unique_ptr<HistoryView::Media> MediaGiftBox::createView(
 				.hideServiceText = true,
 			});
 	} else if (_data.type == GiftType::ChatTheme
-		|| _data.type == GiftType::GiftOffer) {
+		|| _data.type == GiftType::GiftOffer
+		|| _data.type == GiftType::OnchainOffer) {
 		return std::make_unique<HistoryView::ServiceBox>(
 			message,
 			std::make_unique<HistoryView::GiftServiceBox>(message, this));
 	} else if (const auto &unique = _data.unique) {
 		return std::make_unique<HistoryView::MediaGeneric>(
 			message,
-			HistoryView::GenerateUniqueGiftMedia(message, replacing, unique),
+			HistoryView::GenerateUniqueGiftMedia(message, replacing, {
+				.gift = unique,
+				.message = (_data.messageFromUniqueAction
+					? _data.message
+					: tr::marked()),
+				.messageAuthor = (_data.anonymous
+					? nullptr
+					: _data.messageAuthor),
+				.upgrade = _data.upgrade,
+			}),
 			HistoryView::MediaGenericDescriptor{
-				.maxWidth = st::msgServiceGiftBoxSize.width(),
+				.maxWidth = st::chatUniqueGiftMaxWidth,
+				.minWidth = st::msgServiceGiftBoxSize.width(),
 				.paintBgFactory = [=] {
 					return HistoryView::UniqueGiftBg(message, unique);
 				},
+				.fitToContent = true,
 				.service = true,
 			});
 	}

@@ -9,9 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_session.h"
 #include "data/data_stories.h"
+#include "info/statistics/info_statistics_inner_widget.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
-#include "info/statistics/info_statistics_inner_widget.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "ui/ui_utility.h"
@@ -119,6 +119,14 @@ rpl::producer<bool> Widget::desiredShadowVisibility() const {
 
 void Widget::showFinished() {
 	_inner->showFinished();
+}
+
+void Widget::fillTopBarMenu(const Ui::Menu::MenuCallback &addAction) {
+	_inner->fillMenu(addAction);
+}
+
+rpl::producer<> Widget::topBarMenuFilledChanges() const {
+	return _inner->menuFilledChanges();
 }
 
 std::shared_ptr<ContentMemento> Widget::doCreateMemento() {

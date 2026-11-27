@@ -29,7 +29,13 @@ public:
 
 	bool refresh();
 
+	void setDisplayedEmptyOverride(Fn<bool()> value);
+
 	void make(Data::ChatIntro data, bool preview = false);
+	void makeBotPreview(
+		TextWithEntities text,
+		DocumentData *document,
+		PhotoData *photo);
 
 	[[nodiscard]] auto sendIntroSticker() const
 		-> rpl::producer<not_null<DocumentData*>>;
@@ -62,8 +68,11 @@ private:
 
 	void loadCommonGroups();
 
+	[[nodiscard]] bool displayedEmpty() const;
+
 	const not_null<History*> _history;
 	const not_null<ElementDelegate*> _delegate;
+	Fn<bool()> _displayedEmptyOverride;
 	AdminLog::OwnedItem _item;
 
 	DocumentData *_helloChosen = nullptr;

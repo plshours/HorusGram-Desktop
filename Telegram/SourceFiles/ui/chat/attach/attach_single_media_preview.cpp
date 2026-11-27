@@ -7,10 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/attach/attach_single_media_preview.h"
 
-#include "editor/photo_editor_common.h"
-#include "ui/chat/attach/attach_prepare.h"
 #include "core/mime_type.h"
+#include "editor/photo_editor_common.h"
 #include "lottie/lottie_single_player.h"
+#include "ui/chat/attach/attach_prepare.h"
 
 namespace Ui {
 
@@ -27,15 +27,23 @@ SingleMediaPreview *SingleMediaPreview::Create(
 	if (const auto image = std::get_if<PreparedFileInformation::Image>(
 			&file.information->media)) {
 		preview = Editor::ImageModified(image->data, image->modifications);
-		animated = animationPreview = image->animated;
+		animated = image->animated || file.hasAudioEditScene();
+		animationPreview = image->animated;
 		hasModifications = !image->modifications.empty();
 	} else if (const auto video = std::get_if<PreparedFileInformation::Video>(
 			&file.information->media)) {
 		preview = file.videoCover
 			? file.videoCover->preview
-			: video->thumbnail;
+			: (video->thumbnail.isNull()
+				|| !video->modifications.geometry)
+			? video->thumbnail
+			: Editor::ImageModified(
+				video->thumbnail,
+				video->modifications.geometry);
 		animated = true;
-		animationPreview = video->isGifv;
+		// The animated preview plays the file itself, which knows nothing
+		// about the crop or the rotation, so show the edited frame instead.
+		animationPreview = video->isGifv && !video->modifications.geometry;
 	}
 	if (preview.isNull()) {
 		return nullptr;
@@ -54,7 +62,12 @@ SingleMediaPreview *SingleMediaPreview::Create(
 		file.spoiler,
 		animationPreview ? file.path : QString(),
 		type);
+	result->setModifyAllowed(
+		file.canEditVideo() || file.hasAudioEditScene());
 	result->setCanShowHighQualityBadge(file.canUseHighQualityPhoto());
+	result->setCanShowAnimatedBadge(file.hasAnimatedEditScene()
+		&& !file.hasAudioEditScene());
+	result->setVideoQuality(file.videoQuality());
 	return result;
 }
 

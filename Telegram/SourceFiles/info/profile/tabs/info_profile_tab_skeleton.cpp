@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/glare.h"
 #include "ui/painter.h"
 #include "ui/rp_widget.h"
+
 #include "styles/style_info.h"
 
 namespace Info::Profile {
@@ -130,7 +131,7 @@ object_ptr<Ui::RpWidget> CreateTabSkeleton(
 				2);
 			break;
 		}
-		auto &glare = state->glare;
+		const auto &glare = state->glare;
 		if (glare.glare.birthTime) {
 			const auto progress = glare.progress(crl::now());
 			const auto x = (-glare.width)

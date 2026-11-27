@@ -22,19 +22,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "settings/settings_common.h"
+#include "ui/controls/userpic_button.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/menu/menu_action.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/widgets/sent_code_field.h"
+#include "ui/wrap/vertical_layout.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "ui/vertical_list.h"
-#include "ui/controls/userpic_button.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/labels.h"
-#include "ui/widgets/popup_menu.h"
-#include "ui/widgets/menu/menu_action.h"
-#include "ui/widgets/sent_code_field.h"
-#include "ui/wrap/vertical_layout.h"
 #include "window/window_controller.h"
 #include "window/window_slide_animation.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
 #include "styles/style_intro.h"
@@ -200,6 +201,9 @@ SetupEmailLockWidget::SetupEmailLockWidget(
 				tr::lng_settings_cloud_login_email_placeholder()),
 			st::boxRowPadding,
 			style::al_top);
+		emailInput->setInputMethodHints(Qt::ImhEmailCharactersOnly
+			| Qt::ImhNoAutoUppercase
+			| Qt::ImhNoPredictiveText);
 
 		Ui::AddSkip(_layout);
 		Ui::AddSkip(_layout);

@@ -7,12 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/attach/attach_single_file_preview.h"
 
+#include "core/mime_type.h"
+#include "lang/lang_keys.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/text/format_song_name.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
 #include "ui/ui_utility.h"
-#include "core/mime_type.h"
+
 #include "styles/style_chat.h"
 
 #include <QtCore/QFileInfo>
@@ -58,7 +60,11 @@ void SingleFilePreview::preparePreview(const PreparedFile &file) {
 	}
 	prepareThumbFor(data, preview);
 	const auto filepath = file.path;
-	if (filepath.isEmpty()) {
+	if (file.archive) {
+		data.name = file.displayName;
+		data.fileIsImage = false;
+		data.statusText = tr::lng_folder_archive_status(tr::now);
+	} else if (filepath.isEmpty()) {
 		const auto fallbackName = u"image.png"_q;
 		const auto displayName = file.displayName.isEmpty()
 			? fallbackName
@@ -113,6 +119,8 @@ void SingleFilePreview::preparePreview(const PreparedFile &file) {
 		captionContext());
 
 	setData(std::move(data));
+	setSelectable(!file.archive && !file.path.isEmpty());
+	setSelected(file.selected, anim::type::instant);
 }
 
 } // namespace Ui

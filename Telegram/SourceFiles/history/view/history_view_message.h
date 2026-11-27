@@ -7,8 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "history/view/history_view_element.h"
 #include "history/view/history_view_bottom_info.h"
+#include "history/view/history_view_element.h"
 #include "iv/markdown/iv_markdown_article.h"
 #include "ui/effects/animations.h"
 
@@ -26,6 +26,7 @@ struct ReactionId;
 namespace Ui {
 struct BubbleRounding;
 class RoundCheckbox;
+struct TornEdgeCache;
 } // namespace Ui
 
 namespace HistoryView {
@@ -82,6 +83,7 @@ struct InstantViewMediaRuntime
 struct HistoryMessageRichPage
 : RuntimeComponent<HistoryMessageRichPage, Element> {
 	HistoryMessageRichPage();
+	[[nodiscard]] QMargins edgeSkips() const;
 
 	struct Host final : Iv::Markdown::MediaBlockHost {
 		base::weak_ptr<Message> owner;
@@ -100,8 +102,14 @@ struct HistoryMessageRichPage
 
 	Iv::Markdown::MarkdownArticle article;
 	Iv::Markdown::MarkdownArticleThinkingPaintCache thinkingPaintCache;
+	std::unique_ptr<Ui::TornEdgeCache> tornEdges;
 	rpl::lifetime highlightReadyLifetime;
 	int paletteVersion = -1;
+	TimeId registeredFormattedDateUpdate = 0;
+	// Probing at the max width again would undo the final bubble layout.
+	mutable int textualWidth = 0;
+	mutable uint16 demandedTextWidth = 0;
+	bool hasUnsupportedBlocks = false;
 	mutable ClickHandlerPtr handler;
 	mutable std::optional<Iv::Markdown::MarkdownArticleHorizontalScrollHit> handlerHorizontalScrollHit;
 	mutable QPoint handlerHorizontalScrollPoint;
@@ -112,6 +120,17 @@ struct HistoryMessageRichPage
 	mutable Iv::Markdown::MediaActivation handlerMediaActivation;
 	mutable Iv::Markdown::PreparedPlaceholderBlockId handlerPlaceholderId;
 	mutable QPoint handlerPlaceholderPoint;
+	mutable Iv::Markdown::PreparedPlaceholderBlockId pressedPlaceholderId;
+	mutable ClickHandlerPtr pressedPlaceholderHandler;
+	mutable Iv::Markdown::MarkdownArticleButtonRowHit handlerButtonRow;
+	mutable ClickHandlerPtr handlerButtonRowHandler;
+	mutable Iv::Markdown::MarkdownArticleButtonRowHit pressedButtonRow;
+	mutable ClickHandlerPtr pressedButtonRowHandler;
+	mutable std::optional<Iv::Markdown::PreparedEditListItemSource>
+		handlerTaskItem;
+	mutable std::optional<QPoint> handlerInlineButtonPoint;
+	mutable ClickHandlerPtr handlerInlineButtonHandler;
+	mutable ClickHandlerPtr pressedInlineButtonHandler;
 };
 
 enum class BadgeRole : uchar {
@@ -218,6 +237,8 @@ public:
 		const MessageSelection &selection) const override;
 	TextSelection selectionFromQuote(
 		const SelectedQuote &quote) const override;
+	HighlightYRange richQuoteHighlightYRange(
+		const Ui::ChatPaintRichQuote &quote) const override;
 	TextSelection adjustSelection(
 		TextSelection selection,
 		TextSelectType type) const override;
@@ -267,15 +288,14 @@ public:
 	[[nodiscard]] bool toggleSelectionByHandlerClick(
 		const ClickHandlerPtr &handler) const override;
 	[[nodiscard]] bool allowTextSelectionByHandler(
-		const ClickHandlerPtr &handler) const override;
+		const ClickHandlerPtr &handler,
+		bool fromTouch) const override;
 	[[nodiscard]] int infoWidth() const override;
 	[[nodiscard]] int bottomInfoFirstLineWidth() const override;
 	[[nodiscard]] bool bottomInfoIsWide() const override;
 	[[nodiscard]] bool isSignedAuthorElided() const override;
 
 	void itemDataChanged() override;
-
-	VerticalRepaintRange verticalRepaintRange() const override;
 
 	void applyGroupAdminChanges(
 		const base::flat_set<UserId> &changes) override;
@@ -361,6 +381,12 @@ private:
 		Painter &p,
 		QRect &trect,
 		const PaintContext &context) const;
+	void paintFromNameVerification(
+		Painter &p,
+		DocumentId iconId,
+		QPoint position,
+		QColor color,
+		crl::time now) const;
 	void paintEphemeralBadge(
 		Painter &p,
 		QRect &trect,
@@ -433,6 +459,10 @@ private:
 		StateRequest request) const;
 
 	void updateMediaInBubbleState();
+	void updateRichPageInBubbleState();
+	[[nodiscard]] auto countRichPageBubbleEdges() const
+	-> Iv::Markdown::MarkdownArticleBubbleEdges;
+	[[nodiscard]] bool richPageInfoRow() const;
 	QRect countGeometry() const;
 	[[nodiscard]] Ui::BubbleRounding countMessageRounding() const;
 	[[nodiscard]] Ui::BubbleRounding countBubbleRounding(
@@ -445,6 +475,8 @@ private:
 	bool hasVisibleText() const override;
 	[[nodiscard]] int visibleTextLength() const;
 	[[nodiscard]] int visibleMediaTextLength() const;
+	[[nodiscard]] int bottomInfoHeight() const;
+	[[nodiscard]] bool usesMessageInfoLayout() const;
 	[[nodiscard]] bool needInfoDisplay() const;
 	[[nodiscard]] bool invertMedia() const;
 	[[nodiscard]] bool hasFastReply() const;
@@ -463,6 +495,7 @@ private:
 	void refreshInfoSkipBlock(HistoryItem *textItem);
 	[[nodiscard]] int monospaceMaxWidth() const;
 	[[nodiscard]] int bubbleTextWidth(int bubbleWidth) const;
+	[[nodiscard]] int richPageDemandedTextWidth() const;
 	[[nodiscard]] int bubbleTextualWidth() const;
 
 	void ensureSummarizeButton() const;
@@ -496,8 +529,8 @@ private:
 	void psaTooltipToggled(bool shown) const;
 	void invalidateTextDependentCache() override;
 
-	bool textAppearValidate(not_null<TextAppearing*> appearing);
-	bool textAppearCheckLine(not_null<TextAppearing*> appearing);
+	bool textAppearValidate();
+	bool textAppearCheckLine();
 	void textAppearStartWidthAnimation(not_null<TextAppearing*> appearing);
 	void textAppearStartHeightAnimation(
 		not_null<TextAppearing*> appearing,
@@ -511,6 +544,8 @@ private:
 	[[nodiscard]] int rightBadgeWidth() const;
 	void validateFromNameText(PeerData *from) const;
 	void ensureFromNameStatusLink(not_null<PeerData*> peer) const;
+	[[nodiscard]] EmojiStatusId fromNameStatusId(
+		not_null<PeerData*> from) const;
 
 	mutable std::unique_ptr<RightAction> _rightAction;
 	mutable ClickHandlerPtr _fastReplyLink;
@@ -522,6 +557,7 @@ private:
 	mutable std::unique_ptr<TranscribeButton> _summarize;
 
 	mutable Ui::Text::String _fromName;
+	mutable std::unique_ptr<Ui::Text::CustomEmoji> _fromNameVerification;
 	mutable std::unique_ptr<FromNameStatus> _fromNameStatus;
 	mutable std::unique_ptr<Ui::RoundCheckbox> _selectionRoundCheckbox;
 	mutable uint32 _fromNameVersion : 16 = 0;

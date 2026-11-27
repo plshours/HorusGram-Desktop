@@ -20,7 +20,7 @@ project(Telegram
     LANGUAGES C CXX
     VERSION ${desktop_app_version_cmake}
     DESCRIPTION "HoursGram Desktop"
-    HOMEPAGE_URL "https://github.com/plshours/HoursGram-Desktop"
+    HOMEPAGE_URL "https://github.com/plshours/HorusGram-Desktop"
 )
 
 if (APPLE)
@@ -55,6 +55,7 @@ include(cmake/validate_d3d_compiler.cmake)
 include(cmake/target_prepare_qrc.cmake)
 
 include(cmake/options.cmake)
+
 include(cmake/external/qt/package.cmake)
 
 set(desktop_app_skip_libs

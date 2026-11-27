@@ -100,9 +100,8 @@ jobs:
       - name: Prepare native dependencies
         id: prepare-dependencies
         shell: cmd
-        # Qt 6, as Telegram builds Windows x64 now: Qt 5 has no RHI, so the
-        # window would be drawn on the CPU and the D3D11 fixes would not apply.
-        run: Telegram\build\prepare\win.bat silent qt6
+        # Qt 6 is the only Qt prepare.py builds now, it takes no qt6 argument.
+        run: Telegram\build\prepare\win.bat skip-release silent
 
       # The libraries cache was 10 GB, all the cache a repository gets, so it
       # was pushed out right after it was saved and every run built Qt,
@@ -212,10 +211,10 @@ jobs:
             !out/**/*.ilk
             !out/**/*.iobj
             !out/**/*.ipdb
-          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-
-            ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+            ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-
+            ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-main-
 
       # A fresh checkout dates every source file now, later than any restored
       # object file, so MSBuild would rebuild everything. Files whose content
@@ -265,7 +264,7 @@ jobs:
       - name: Configure HorusGram
         shell: cmd
         working-directory: Telegram
-        run: configure.bat x64 qt6 -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID || '2040' }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH || 'b18441a1ff607e10a989891a5462e627' }} -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
+        run: configure.bat x64 -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON -D DESKTOP_APP_DISABLE_CRASH_REPORTS=ON -D TDESKTOP_API_ID=${{ secrets.TDESKTOP_API_ID || '2040' }} -D TDESKTOP_API_HASH=${{ secrets.TDESKTOP_API_HASH || 'b18441a1ff607e10a989891a5462e627' }} -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=
 
       - name: Build HorusGram
         shell: cmd
@@ -365,7 +364,7 @@ jobs:
             !out/**/*.ilk
             !out/**/*.iobj
             !out/**/*.ipdb
-          key: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
 
       # The repository has 10 GB of cache in all. Build outputs of other
       # branches and of older cache versions pushed the dependencies or this
@@ -380,8 +379,8 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_CACHE_KEY: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
-          MAIN_CACHE_PREFIX: ${{ runner.os }}-hoursgram-x64-msbuild-v5-${{ env.BUILD_CONFIGURATION }}-main-
+          CURRENT_CACHE_KEY: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-${{ github.ref_name }}-${{ github.sha }}
+          MAIN_CACHE_PREFIX: ${{ runner.os }}-hoursgram-x64-msbuild-v6-${{ hashFiles('Telegram/build/prepare/prepare.py') }}-${{ env.BUILD_CONFIGURATION }}-main-
         run: |
           $headers = @{
             Authorization = "Bearer $env:GH_TOKEN"

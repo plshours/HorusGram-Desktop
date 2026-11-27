@@ -7,25 +7,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "payments/ui/payments_panel.h"
 
-#include "payments/ui/payments_form_summary.h"
-#include "payments/ui/payments_edit_information.h"
+#include "lang/lang_keys.h"
 #include "payments/ui/payments_edit_card.h"
-#include "payments/ui/payments_panel_delegate.h"
+#include "payments/ui/payments_edit_information.h"
 #include "payments/ui/payments_field.h"
-#include "ui/widgets/separate_panel.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/wrap/fade_wrap.h"
+#include "payments/ui/payments_form_summary.h"
+#include "payments/ui/payments_panel_delegate.h"
 #include "ui/boxes/single_choice_box.h"
 #include "ui/chat/attach/attach_bot_webview.h"
+#include "ui/effects/radial_animation.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
-#include "ui/effects/radial_animation.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/separate_panel.h"
+#include "ui/wrap/fade_wrap.h"
 #include "ui/click_handler.h"
-#include "lang/lang_keys.h"
 #include "webview/webview_embed.h"
 #include "webview/webview_interface.h"
-#include "styles/style_payments.h"
+
 #include "styles/style_layers.h"
+#include "styles/style_payments.h"
 
 namespace Payments::Ui {
 namespace {
@@ -66,6 +67,10 @@ Panel::Progress::Progress(QWidget *parent, Fn<QRect()> rect)
 , animation(
 	[=] { if (!anim::Disabled()) widget.update(rect()); },
 	st::paymentsLoading) {
+}
+
+not_null<QWidget*> Panel::widget() const {
+	return _widget.get();
 }
 
 Panel::Panel(not_null<PanelDelegate*> delegate)
@@ -442,7 +447,10 @@ void Panel::showEditCardByUrl(
 	auto bottomText = canSaveInformation
 		? rpl::producer<QString>()
 		: tr::lng_payments_processed_by(lt_provider, rpl::single(provider));
-	if (!showWebview(url, true, std::move(bottomText))) {
+	if (!showWebview(
+			url,
+			WebviewMode::PaymentMethod,
+			std::move(bottomText))) {
 		const auto available = Webview::Availability();
 		if (available.error != Webview::Available::Error::None) {
 			showWebviewError(
@@ -493,8 +501,9 @@ void Panel::hideWebviewProgress() {
 
 bool Panel::showWebview(
 		const QString &url,
-		bool allowBack,
+		WebviewMode mode,
 		rpl::producer<QString> bottomText) {
+	_webviewMode = mode;
 	const auto params = _delegate->panelWebviewThemeParams();
 	if (!_webview && !createWebview(params)) {
 		return false;
@@ -503,7 +512,7 @@ bool Panel::showWebview(
 	_widget->hideLayer(anim::type::instant);
 	updateThemeParams(params);
 	_webview->window.navigate(url);
-	_widget->setBackAllowed(allowBack);
+	_widget->setBackAllowed(mode == WebviewMode::PaymentMethod);
 	if (bottomText) {
 		const auto &padding = st::paymentsPanelPadding;
 		const auto label = CreateChild<FlatLabel>(
@@ -598,19 +607,22 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 	}, _webview->lifetime);
 
 	raw->setMessageHandler([=](const QJsonDocument &message) {
+		if (_webviewMode != WebviewMode::PaymentMethod) {
+			return;
+		}
 		const auto save = _saveWebviewInformation
 			&& _saveWebviewInformation->checked();
 		_delegate->panelWebviewMessage(message, save);
 	});
 
-	raw->setNavigationStartHandler([=](const QString &uri, bool newWindow) {
+	raw->setNavigationPolicyHandler([=](const QString &uri, bool newWindow) {
 		if (!_delegate->panelWebviewNavigationAttempt(uri)) {
 			return false;
-		} else if (newWindow) {
-			return false;
 		}
+		return !newWindow;
+	});
+	raw->setNavigationStartHandler([=] {
 		showWebviewProgress();
-		return true;
 	});
 	raw->setNavigationDoneHandler([=](bool success) {
 		hideWebviewProgress();

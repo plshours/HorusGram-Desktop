@@ -7,11 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_add_poll_option.h"
 
-#include "history/view/history_view_element.h"
-#include "history/view/history_view_element_overlay.h"
-#include "history/view/controls/history_view_webpage_processor.h"
-#include "history/view/media/history_view_media.h"
-#include "history/view/media/menu/history_view_poll_menu.h"
 #include "api/api_polls.h"
 #include "apiwrap.h"
 #include "base/event_filter.h"
@@ -19,12 +14,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/tabbed_selector.h"
 #include "core/file_utilities.h"
 #include "core/ui_integration.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_peer.h"
 #include "data/data_poll.h"
-#include "data/data_user.h"
 #include "data/data_session.h"
+#include "data/data_user.h"
 #include "data/data_web_page.h"
-#include "data/stickers/data_custom_emoji.h"
+#include "history/view/controls/history_view_webpage_processor.h"
+#include "history/view/media/menu/history_view_poll_menu.h"
+#include "history/view/media/history_view_media.h"
+#include "history/view/history_view_element.h"
+#include "history/view/history_view_element_overlay.h"
 #include "history/history.h"
 #include "history/history_item.h"
 #include "lang/lang_keys.h"
@@ -34,16 +34,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "poll/poll_link_thumbnail.h"
 #include "poll/poll_media_upload.h"
 #include "ui/chat/attach/attach_prepare.h"
-#include "ui/dynamic_thumbnails.h"
 #include "ui/chat/chat_style.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/popup_menu.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/dynamic_thumbnails.h"
 #include "window/section_widget.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_menu_icons.h"
@@ -51,6 +52,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace HistoryView {
 namespace {
+
+[[nodiscard]] int EmojiOverflowLeft() {
+	return std::max(
+		(st::historyPollAddOptionEmoji.width
+			- st::historyPollRadio.diameter) / 2,
+		0);
+}
 
 class AddPollOptionWidget final : public Ui::RpWidget {
 public:
@@ -159,10 +167,15 @@ void AddPollOptionWidget::setupField() {
 	const auto attach = _attach;
 	sizeValue(
 	) | rpl::on_next([field, emoji, attach](QSize size) {
-		field->setGeometry(0, 0, size.width(), size.height());
+		const auto overflow = EmojiOverflowLeft();
+		field->setGeometry(
+			overflow,
+			0,
+			size.width() - overflow,
+			size.height());
 		const auto bsize = st::historyPollAddOptionButtonSize;
 		const auto by = (size.height() - bsize) / 2;
-		emoji->moveToLeft(st::historyPollAddOptionEmojiLeft, by);
+		emoji->moveToLeft(0, by);
 		attach->moveToRight(0, by, size.width());
 	}, _field->lifetime());
 
@@ -474,10 +487,11 @@ QString AddPollOptionWidget::mapErrorToText(const QString &error) {
 }
 
 void AddPollOptionWidget::updatePosition(QPoint topLeft, int w) {
+	const auto overflow = EmojiOverflowLeft();
 	setGeometry(
-		topLeft.x(),
+		topLeft.x() - overflow,
 		topLeft.y() + st::historyPollAddOptionTop,
-		w,
+		w + overflow,
 		st::historyPollAddOptionField.heightMin);
 }
 

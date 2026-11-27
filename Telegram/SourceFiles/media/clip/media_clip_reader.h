@@ -125,7 +125,6 @@ public:
 
 	[[nodiscard]] crl::time getPositionMs() const;
 	[[nodiscard]] crl::time getDurationMs() const;
-	void pauseResumeVideo();
 
 	void stop();
 	void error();
@@ -173,7 +172,7 @@ private:
 
 	QAtomicInt _autoPausedGif = 0;
 	QAtomicInt _videoPauseRequest = 0;
-	int32 _threadIndex;
+	int32 _threadIndex = 0;
 
 	friend class Manager;
 
@@ -196,7 +195,7 @@ public:
 		return *this;
 	}
 	void swap(ReaderPointer &other) {
-		qSwap(_pointer, other._pointer);
+		std::swap(_pointer, other._pointer);
 	}
 	Reader *get() const {
 		return valid() ? _pointer : nullptr;

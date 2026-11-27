@@ -7,10 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "layout/layout_item_base.h"
-#include "layout/layout_document_generic_preview.h"
-#include "media/clip/media_clip_reader.h"
 #include "core/click_handler_types.h"
+#include "layout/layout_document_generic_preview.h"
+#include "layout/layout_item_base.h"
+#include "media/clip/media_clip_reader.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/radial_animation.h"
 
@@ -22,6 +22,7 @@ struct OverviewFileLayout;
 } // namespace style
 
 namespace Data {
+struct FileOrigin;
 class Media;
 class PhotoMedia;
 class DocumentMedia;
@@ -68,6 +69,12 @@ public:
 	[[nodiscard]] not_null<HistoryItem*> getItem() const {
 		return _parent;
 	}
+
+	[[nodiscard]] virtual DocumentData *getDocument() const {
+		return nullptr;
+	}
+
+	[[nodiscard]] virtual bool selectionConsumesClick(QPoint point) const;
 
 	void clickHandlerActiveChanged(const ClickHandlerPtr &action, bool active) override;
 	void clickHandlerPressedChanged(const ClickHandlerPtr &action, bool pressed) override;
@@ -191,7 +198,7 @@ private:
 
 };
 
-struct Info : RuntimeComponent<Info, LayoutItemBase> {
+struct Info : RuntimeComponent<Info, AbstractLayoutItem> {
 	int top = 0;
 };
 
@@ -202,6 +209,8 @@ struct MediaOptions {
 	bool storyShowPinned = false;
 	bool storyHidden = false;
 	bool storyShowHidden = false;
+	float aspectRatio = 0.;
+	std::shared_ptr<const Data::FileOrigin> origin;
 };
 
 class Photo final : public ItemBase {
@@ -235,6 +244,8 @@ private:
 	void clearSpoiler();
 
 	const not_null<PhotoData*> _data;
+	const float _aspectRatio;
+	const std::shared_ptr<const Data::FileOrigin> _origin;
 	mutable std::shared_ptr<Data::PhotoMedia> _dataMedia;
 	std::unique_ptr<Ui::SpoilerAnimation> _spoiler;
 
@@ -315,6 +326,7 @@ private:
 	QImage _thumb;
 	bool _thumbGood = false;
 	bool _sensitiveSpoiler = false;
+	bool _inlineOverCap = false;
 
 };
 
@@ -355,6 +367,8 @@ private:
 
 	const not_null<DocumentData*> _data;
 	PhotoData *_videoCover = nullptr;
+	const float _aspectRatio;
+	const std::shared_ptr<const Data::FileOrigin> _origin;
 	mutable std::shared_ptr<Data::DocumentMedia> _dataMedia;
 	mutable std::shared_ptr<Data::PhotoMedia> _videoCoverMedia;
 	StatusText _status;
@@ -383,7 +397,8 @@ public:
 		not_null<Delegate*> delegate,
 		not_null<HistoryItem*> parent,
 		not_null<DocumentData*> voice,
-		const style::OverviewFileLayout &st);
+		const style::OverviewFileLayout &st,
+		bool globalSearch);
 
 	void initDimensions() override;
 	void paint(Painter &p, const QRect &clip, TextSelection selection, const PaintContext *context) override;
@@ -391,6 +406,10 @@ public:
 	TextState getState(
 		QPoint point,
 		StateRequest request) const override;
+
+	[[nodiscard]] DocumentData *getDocument() const override {
+		return _data;
+	}
 
 	void clearHeavyPart() override;
 
@@ -410,13 +429,17 @@ private:
 	ClickHandlerPtr _namel;
 
 	const style::OverviewFileLayout &_st;
+	const bool _globalSearch;
 
 	Ui::Text::String _name;
 	Ui::Text::String _details;
 	Ui::Text::String _caption;
 	int _nameVersion = 0;
+	rpl::lifetime _searchNameLifetime;
 
 	void updateName();
+	void watchSearchName();
+	void updateSearchName();
 	bool updateStatusText();
 
 };
@@ -448,6 +471,11 @@ public:
 	TextState getState(
 		QPoint point,
 		StateRequest request) const override;
+	[[nodiscard]] bool selectionConsumesClick(QPoint point) const override;
+
+	[[nodiscard]] DocumentData *getDocument() const override {
+		return _data;
+	}
 
 	void clearHeavyPart() override;
 
@@ -524,7 +552,8 @@ private:
 	void validateThumbnail();
 	void setupLinks(
 		const TextWithEntities &text,
-		const QString &mainUrl);
+		const QString &mainUrl,
+		EntityType mainType);
 
 	ClickHandlerPtr _photol;
 	ClickHandlerPtr _titlel;
@@ -542,12 +571,16 @@ private:
 
 	struct LinkEntry {
 		LinkEntry() = default;
-		LinkEntry(const QString &url, const QString &display);
+		LinkEntry(
+			const QString &url,
+			const QString &display,
+			EntityType type);
 
 		QString url;
 		QString display;
 		Ui::Text::String text;
 		ClickHandlerPtr handler;
+		EntityType type = EntityType::Url;
 	};
 	std::vector<LinkEntry> _links;
 

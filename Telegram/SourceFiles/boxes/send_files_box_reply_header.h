@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/effects/animations.h"
-#include "ui/rp_widget.h"
 #include "ui/text/text.h"
+#include "ui/rp_widget.h"
 
 class HistoryItem;
 
@@ -63,6 +63,7 @@ private:
 	Ui::Text::String _shownMessageName;
 	Ui::Text::String _shownMessageText;
 	std::unique_ptr<Ui::SpoilerAnimation> _previewSpoiler;
+	QImage _spoilerCache;
 	bool _repaintScheduled = false;
 
 	Ui::Animations::Simple _showAnimation;

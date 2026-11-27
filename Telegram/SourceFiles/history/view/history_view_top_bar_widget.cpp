@@ -7,67 +7,71 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_top_bar_widget.h"
 
-#include "history/history.h"
-#include "history/view/history_view_send_action.h"
-#include "boxes/add_contact_box.h"
-#include "ui/boxes/confirm_box.h"
-#include "info/info_memento.h"
-#include "info/info_controller.h"
-#include "info/profile/info_profile_values.h"
-#include "storage/storage_media_prepare.h"
-#include "storage/storage_shared_media.h"
-#include "mainwidget.h"
-#include "mainwindow.h"
-#include "main/main_session.h"
-#include "mtproto/mtproto_config.h"
-#include "lang/lang_keys.h"
-#include "core/shortcuts.h"
-#include "core/application.h"
-#include "core/core_settings.h"
-#include "ui/controls/userpic_button.h"
-#include "ui/wrap/fade_wrap.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/widgets/popup_menu.h"
-#include "ui/widgets/shadow.h"
-#include "ui/widgets/menu/menu_add_action_callback_factory.h"
-#include "ui/effects/radial_animation.h"
-#include "ui/boxes/report_box_graphics.h" // Ui::ReportReason
-#include "ui/text/text.h"
-#include "ui/text/text_options.h"
-#include "ui/painter.h"
-#include "ui/unread_badge.h"
-#include "ui/ui_utility.h"
-#include "window/window_adaptive.h"
-#include "window/window_session_controller.h"
-#include "window/window_peer_menu.h"
-#include "calls/calls_instance.h"
-#include "data/stickers/data_custom_emoji.h"
-#include "data/data_peer_values.h"
-#include "data/data_group_call.h" // GroupCall::input.
-#include "data/data_folder.h"
-#include "data/data_forum.h"
-#include "data/data_saved_messages.h"
-#include "data/data_saved_sublist.h"
-#include "data/data_session.h"
-#include "data/data_stories.h"
-#include "data/data_channel.h"
-#include "data/data_chat.h"
-#include "data/data_user.h"
-#include "data/data_changes.h"
-#include "data/data_forum_topic.h"
-#include "data/data_send_action.h"
-#include "dialogs/dialogs_main_list.h"
-#include "chat_helpers/emoji_interactions.h"
+#include "api/api_chat_participants.h"
+#include "apiwrap.h"
 #include "base/call_delayed.h"
 #include "base/unixtime.h"
+#include "boxes/add_contact_box.h"
+#include "calls/calls_instance.h"
+#include "chat_helpers/emoji_interactions.h"
+#include "core/application.h"
+#include "core/core_settings.h"
+#include "core/shortcuts.h"
+#include "data/stickers/data_custom_emoji.h"
+#include "data/data_changes.h"
+#include "data/data_channel.h"
+#include "data/data_chat.h"
+#include "data/data_folder.h"
+#include "data/data_forum.h"
+#include "data/data_forum_topic.h"
+#include "data/data_group_call.h" // GroupCall::input.
+#include "data/data_peer_values.h"
+#include "data/data_saved_messages.h"
+#include "data/data_saved_sublist.h"
+#include "data/data_send_action.h"
+#include "data/data_session.h"
+#include "data/data_stories.h"
+#include "data/data_user.h"
+#include "dialogs/dialogs_main_list.h"
+#include "history/view/history_view_send_action.h"
+#include "history/history.h"
+#include "info/profile/info_profile_values.h"
+#include "info/info_controller.h"
+#include "info/info_memento.h"
+#include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "mainwidget.h"
+#include "mainwindow.h"
+#include "mtproto/mtproto_config.h"
+#include "storage/storage_media_prepare.h"
+#include "storage/storage_shared_media.h"
 #include "support/support_helper.h"
-#include "apiwrap.h"
-#include "api/api_chat_participants.h"
-#include "styles/style_window.h"
-#include "styles/style_dialogs.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/boxes/report_box_graphics.h" // Ui::ReportReason
+#include "ui/controls/button_context_menu.h"
+#include "ui/controls/userpic_button.h"
+#include "ui/effects/radial_animation.h"
+#include "ui/text/text.h"
+#include "ui/text/text_options.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/widgets/shadow.h"
+#include "ui/wrap/fade_wrap.h"
+#include "ui/painter.h"
+#include "ui/ui_utility.h"
+#include "ui/unread_badge.h"
+#include "ui/unread_counter_format.h"
+#include "window/window_adaptive.h"
+#include "window/window_columns.h"
+#include "window/window_peer_menu.h"
+#include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
+#include "styles/style_dialogs.h"
 #include "styles/style_info.h"
+#include "styles/style_window.h"
 
 #include <QtGui/QWindow>
 
@@ -248,8 +252,9 @@ TopBarWidget::TopBarWidget(
 		| UpdateFlag::Rights
 		| UpdateFlag::EmojiStatus
 		| UpdateFlag::Name
+		| UpdateFlag::BarSettings
 	) | rpl::on_next([=](const Data::PeerUpdate &update) {
-		if ((update.flags & UpdateFlag::Name)
+		if ((update.flags & (UpdateFlag::Name | UpdateFlag::BarSettings))
 			&& (update.peer == titleNamePeer())) {
 			TopBarWidget::update();
 		}
@@ -280,8 +285,8 @@ TopBarWidget::TopBarWidget(
 	}, lifetime());
 
 	rpl::combine(
-		Core::App().settings().thirdSectionInfoEnabledValue(),
-		Core::App().settings().tabbedReplacedWithInfoValue()
+		_controller->columns().thirdSectionInfoEnabledValue(),
+		_controller->columns().tabbedReplacedWithInfoValue()
 	) | rpl::on_next([=] {
 		updateInfoToggleActive();
 	}, lifetime());
@@ -403,16 +408,29 @@ bool TopBarWidget::createMenu(
 			: st::defaultPopupMenu);
 	_menu->setDestroyedCallback([
 			weak = base::make_weak(this),
-			weakButton = base::make_weak(button),
 			menu = _menu.get()] {
 		if (weak && weak->_menu == menu) {
-			if (weakButton) {
-				weakButton->setForceRippled(false);
-			}
+			weak->unrippleMenuButton();
 		}
 	});
+	_menuButton = button;
 	button->setForceRippled(true);
+	Ui::KeepHoveredWhileShown(button, _menu.get());
 	return true;
+}
+
+void TopBarWidget::unrippleMenuButton() {
+	if (const auto button = _menuButton.get()) {
+		button->setForceRippled(false);
+		Ui::SendSynteticMouseEvent(button, QEvent::MouseMove, Qt::NoButton);
+	}
+}
+
+void TopBarWidget::closeMenu() {
+	if (_menu) {
+		_menu = nullptr;
+		unrippleMenuButton();
+	}
 }
 
 void TopBarWidget::showPeerMenu() {
@@ -423,7 +441,17 @@ void TopBarWidget::showPeerMenu() {
 	const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
 	Window::FillDialogsEntryMenu(_controller, _activeChat, addAction);
 	if (_menu->empty()) {
-		_menu = nullptr;
+		closeMenu();
+	} else if (_narrowRatio > 0.) {
+		_menu->setForcedOrigin(Ui::PanelAnimation::Origin::TopLeft);
+		_menu->popup(Ui::PopupMenu::ConstrainToParentScreen(
+			_menu,
+			mapToGlobal(
+				QPoint(
+					-st::topBarMenuPosition.x()
+						- Ui::BoxShadow::ExtendFor(
+							_menu->st().shadow).left(),
+					st::topBarMenuPosition.y()))));
 	} else {
 		_menu->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
 		_menu->popup(Ui::PopupMenu::ConstrainToParentScreen(
@@ -478,12 +506,12 @@ void TopBarWidget::showCallMenu() {
 void TopBarWidget::toggleInfoSection() {
 	const auto isThreeColumn = _controller->adaptive().isThreeColumn();
 	if (isThreeColumn
-		&& (Core::App().settings().thirdSectionInfoEnabled()
-			|| Core::App().settings().tabbedReplacedWithInfo())) {
+		&& (_controller->columns().thirdSectionInfoEnabled()
+			|| _controller->columns().tabbedReplacedWithInfo())) {
 		_controller->closeThirdSection();
 	} else if (_activeChat.key.peer()) {
 		if (_controller->canShowThirdSection()) {
-			Core::App().settings().setThirdSectionInfoEnabled(true);
+			_controller->columns().setThirdSectionInfoEnabled(true);
 			Core::App().saveSettingsDelayed();
 			if (isThreeColumn) {
 				_controller->showSection(
@@ -616,6 +644,7 @@ void TopBarWidget::paintTopBar(Painter &p) {
 			&& _activeChat.section != Section::SavedSublist)
 		|| (_activeChat.section == Section::Scheduled)
 		|| (_activeChat.section == Section::Pinned)
+		|| (_activeChat.section == Section::WelcomeMessages)
 		|| communityChatsListBar()) {
 		auto text = (_activeChat.section == Section::Scheduled)
 			? ((peer && peer->isSelf())
@@ -623,6 +652,8 @@ void TopBarWidget::paintTopBar(Painter &p) {
 				: tr::lng_scheduled_messages(tr::now))
 			: (_activeChat.section == Section::Pinned)
 			? _customTitleText
+			: (_activeChat.section == Section::WelcomeMessages)
+			? tr::lng_welcome_messages_title(tr::now)
 			: folder
 			? folder->chatListName()
 			: peer->isSelf()
@@ -850,7 +881,7 @@ void TopBarWidget::mousePressEvent(QMouseEvent *e) {
 		if ((_animatingMode && _back->rect().contains(e->pos()))
 			|| archiveTop) {
 			if (!rootChatsListBar()) {
-				backClicked();
+				InvokeQueued(this, [=] { backClicked(); });
 			}
 		} else {
 			infoClicked();
@@ -867,9 +898,7 @@ void TopBarWidget::infoClicked() {
 	} else if (const auto sublist = key.sublist()) {
 		_controller->showSection(std::make_shared<Info::Memento>(sublist));
 	} else if (key.peer()->savedSublistsInfo()) {
-		_controller->showSection(std::make_shared<Info::Memento>(
-			key.peer(),
-			Info::Section::Type::SavedSublists));
+		_controller->showSection(Info::Memento::Default(key.peer()));
 	} else if (key.peer()->sharedMediaInfo()) {
 		_controller->showSection(std::make_shared<Info::Memento>(
 			key.peer(),
@@ -976,6 +1005,13 @@ void TopBarWidget::setActiveChat(
 				update();
 			}, _activeChatLifetime);
 
+			session().changes().topicUpdates(
+				topic,
+				Data::TopicUpdate::Flag::Title
+			) | rpl::on_next([=] {
+				update();
+			}, _activeChatLifetime);
+
 			// _menuToggle visibility depends on "View topic info",
 			// "View topic info" visibility depends on activeChatCurrent.
 			_controller->activeChatChanges(
@@ -986,10 +1022,7 @@ void TopBarWidget::setActiveChat(
 	}
 	updateUnreadBadge();
 	refreshInfoButton();
-	if (_menu) {
-		_menuToggle->setForceRippled(false);
-		_menu = nullptr;
-	}
+	closeMenu();
 	updateOnlineDisplay();
 	updateControlsVisibility();
 	refreshUnreadBadge();
@@ -1180,8 +1213,10 @@ void TopBarWidget::updateControlsGeometry() {
 		+ _clear->width();
 	buttonsWidth += buttonsLeft + st::topBarActionSkip * 3;
 
-	auto widthLeft = qMin(width() - buttonsWidth, -2 * st::defaultActiveButton.width);
-	auto buttonFullWidth = qMin(-(widthLeft / 2), 0);
+	auto widthLeft = std::min(
+		width() - buttonsWidth,
+		-2 * st::defaultActiveButton.width);
+	auto buttonFullWidth = std::min(-(widthLeft / 2), 0);
 	_forward->setFullWidth(buttonFullWidth);
 	_sendNow->setFullWidth(buttonFullWidth);
 	_delete->setFullWidth(buttonFullWidth);
@@ -1298,7 +1333,19 @@ void TopBarWidget::updateControlsGeometry() {
 	}
 
 	_rightTaken = 0;
-	_menuToggle->moveToRight(_rightTaken, otherButtonsTop);
+	if (rootChatsListBar() && _activeChat.key.folder()) {
+		const auto &toggle = st::topBarMenuToggle;
+		const auto narrowLeft = (_narrowWidth - toggle.icon.width()) / 2
+			- toggle.iconPosition.x();
+		_menuToggle->moveToLeft(
+			anim::interpolate(
+				width() - _menuToggle->width(),
+				narrowLeft,
+				_narrowRatio),
+			otherButtonsTop);
+	} else {
+		_menuToggle->moveToRight(_rightTaken, otherButtonsTop);
+	}
 	if (_menuToggle->isHidden()) {
 		_rightTaken += (_menuToggle->width() - _search->width());
 	} else {
@@ -1343,6 +1390,8 @@ void TopBarWidget::setAnimatingMode(bool enabled) {
 		_animatingMode = enabled;
 		setAttribute(Qt::WA_OpaquePaintEvent, !_animatingMode);
 		finishAnimating();
+	} else if (!enabled) {
+		finishAnimating();
 	}
 }
 
@@ -1365,10 +1414,13 @@ void TopBarWidget::updateControlsVisibility() {
 
 
 	const auto isOneColumn = _controller->adaptive().isOneColumn();
+
+	// MainWidget is already gone while the window clears its widgets.
+	const auto main = _controller->widget()->sessionContent();
 	const auto backVisible = !rootChatsListBar()
 		&& (isOneColumn
 			|| (_activeChat.section == Section::ChatsList)
-			|| !_controller->content()->stackIsEmpty());
+			|| (main && !main->stackIsEmpty()));
 	_back->setVisible(backVisible && !_chooseForReportReason);
 	_cancelChoose->setVisible(_chooseForReportReason.has_value());
 	updateInfoButtonVisibility();
@@ -1404,6 +1456,8 @@ void TopBarWidget::updateControlsVisibility() {
 		? !_activeChat.key.folder()
 		: (section == Section::Scheduled)
 		? (hasPollsMenu || hasTodoListsMenu)
+		: (section == Section::WelcomeMessages)
+		? true
 		: (section == Section::Replies)
 		? (hasPollsMenu || hasTodoListsMenu || hasTopicMenu)
 		: (section == Section::ChatsList)
@@ -1432,7 +1486,8 @@ void TopBarWidget::updateControlsVisibility() {
 	}
 	_menuToggle->setVisible(hasMenu
 		&& !_chooseForReportReason
-		&& (_narrowRatio < 1.));
+		&& (_narrowRatio < 1.
+			|| (rootChatsListBar() && _activeChat.key.folder())));
 	_infoToggle->setVisible(hasInfo
 		&& !isOneColumn
 		&& _controller->canShowThirdSection()
@@ -1903,21 +1958,16 @@ void TopBarWidget::updateUnreadBadge() {
 	const auto key = _activeChat.key;
 	const auto muted = session().data().unreadBadgeMutedIgnoreOne(key);
 	const auto counter = session().data().unreadBadgeIgnoreOne(key);
-	const auto text = [&] {
-		if (!counter) {
-			return QString();
-		}
-		return (counter > 999)
-			? u"..%1"_q.arg(counter % 100, 2, 10, QChar('0'))
-			: QString::number(counter);
-	}();
+	const auto text = counter
+		? FormatUnreadCounterShort(counter)
+		: QString();
 	_unreadBadge->setText(text, !muted);
 }
 
 void TopBarWidget::updateInfoToggleActive() {
 	auto infoThirdActive = _controller->adaptive().isThreeColumn()
-		&& (Core::App().settings().thirdSectionInfoEnabled()
-			|| Core::App().settings().tabbedReplacedWithInfo());
+		&& (_controller->columns().thirdSectionInfoEnabled()
+			|| _controller->columns().tabbedReplacedWithInfo());
 	auto iconOverride = infoThirdActive
 		? &st::topBarInfoActive
 		: nullptr;

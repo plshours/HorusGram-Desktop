@@ -7,12 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "editor/photo_editor_layer_widget.h"
 
-#include "lang/lang_keys.h"
-#include "ui/boxes/confirm_box.h" // InformBox
 #include "editor/editor_layer_widget.h"
 #include "editor/photo_editor.h"
+#include "lang/lang_keys.h"
 #include "storage/localimageloader.h"
 #include "storage/storage_media_prepare.h"
+#include "ui/boxes/confirm_box.h" // InformBox
 #include "ui/chat/attach/attach_prepare.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -28,7 +28,9 @@ void OpenWithPreparedFile(
 		int previewWidth,
 		Fn<void(bool ok)> &&doneCallback,
 		int sideLimit,
-		QSize exactSize) {
+		QSize exactSize,
+		bool composeAnimated,
+		bool composeSound) {
 	using ImageInfo = Ui::PreparedFileInformation::Image;
 	const auto image = std::get_if<ImageInfo>(&file->information->media);
 	if (!image) {
@@ -45,7 +47,9 @@ void OpenWithPreparedFile(
 
 	sideLimit = sideLimit ? sideLimit : PhotoSideLimit(true);
 	const auto accepted = std::make_shared<bool>();
-	auto callback = [=](const PhotoModifications &mods) {
+	// The editor layer outlives a closed box, which owns *file.
+	auto callback = crl::guard(parent, [=](
+			const PhotoModifications &mods) {
 		*accepted = true;
 		image->modifications = mods;
 		Storage::UpdateImageDetails(*file, previewWidth, sideLimit);
@@ -57,7 +61,7 @@ void OpenWithPreparedFile(
 				: PreparedFile::Type::File;
 		}
 		doneCallback(true);
-	};
+	});
 	auto copy = image->data;
 	const auto fileImage = std::make_shared<Image>(std::move(copy));
 	const auto keepRatio = !exactSize.isEmpty();
@@ -67,7 +71,12 @@ void OpenWithPreparedFile(
 		show,
 		fileImage,
 		image->modifications,
-		EditorData{ .exactSize = exactSize, .keepAspectRatio = keepRatio });
+		EditorData{
+			.exactSize = exactSize,
+			.keepAspectRatio = keepRatio,
+			.composeAnimated = composeAnimated,
+			.composeSound = composeSound,
+		});
 	const auto raw = editor.get();
 	auto layer = std::make_unique<LayerWidget>(parent, std::move(editor));
 	InitEditorLayer(layer.get(), raw, std::move(callback));

@@ -55,7 +55,7 @@ constexpr auto kArtworkAttempts = 3;
 constexpr auto kArtworkRetryDelay = 700;
 constexpr auto kFreshWaveLifetime = crl::time(30 * 60 * 1000);
 constexpr auto kUserAgent = "HoursGram Desktop "
-	"(https://github.com/plshours/HoursGram-Desktop)";
+	"(https://github.com/plshours/HorusGram-Desktop)";
 
 // Never destroyed: a Qt object that is a static of a function would be taken
 // down after the application object, which is too late for it.

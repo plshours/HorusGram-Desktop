@@ -21,6 +21,7 @@ struct WhoReadList;
 
 namespace Data {
 class ForumTopic;
+class SavedMessages;
 class SavedSublist;
 } // namespace Data
 
@@ -49,10 +50,13 @@ struct Tag {
 namespace Info::GlobalMedia {
 
 struct Tag {
-	explicit Tag(not_null<UserData*> self) : self(self) {
+	explicit Tag(not_null<UserData*> self, bool onlyForwardable = false)
+	: self(self)
+	, onlyForwardable(onlyForwardable) {
 	}
 
 	not_null<UserData*> self;
+	bool onlyForwardable = false;
 };
 
 } // namespace Info::GlobalMedia
@@ -80,6 +84,7 @@ public:
 	explicit Key(not_null<PeerData*> peer);
 	explicit Key(not_null<Data::ForumTopic*> topic);
 	explicit Key(not_null<Data::SavedSublist*> sublist);
+	explicit Key(not_null<Data::SavedMessages*> savedMessages);
 	Key(Settings::Tag settings);
 	Key(Downloads::Tag downloads);
 	Key(Stories::Tag stories);
@@ -97,9 +102,11 @@ public:
 	[[nodiscard]] PeerData *peer() const;
 	[[nodiscard]] Data::ForumTopic *topic() const;
 	[[nodiscard]] Data::SavedSublist *sublist() const;
+	[[nodiscard]] Data::SavedMessages *savedMessages() const;
 	[[nodiscard]] UserData *settingsSelf() const;
 	[[nodiscard]] bool isDownloads() const;
 	[[nodiscard]] bool isGlobalMedia() const;
+	[[nodiscard]] bool globalMediaOnlyForwardable() const;
 	[[nodiscard]] PeerData *storiesPeer() const;
 	[[nodiscard]] int storiesAlbumId() const;
 	[[nodiscard]] int storiesAddToAlbumId() const;
@@ -130,6 +137,7 @@ private:
 		not_null<PeerData*>,
 		not_null<Data::ForumTopic*>,
 		not_null<Data::SavedSublist*>,
+		not_null<Data::SavedMessages*>,
 		Settings::Tag,
 		Downloads::Tag,
 		Stories::Tag,
@@ -287,6 +295,12 @@ public:
 	virtual rpl::producer<QString> mediaSourceQueryValue() const;
 	virtual rpl::producer<QString> searchQueryValue() const;
 
+	[[nodiscard]] rpl::producer<SparseIdsMergedSlice> sharedMediaSource(
+		Storage::SharedMediaType type,
+		SparseIdsMergedSlice::UniversalMsgId aroundId,
+		int limitBefore,
+		int limitAfter) const;
+
 	void showSection(
 		std::shared_ptr<Window::SectionMemento> memento,
 		const Window::SectionShow &params = Window::SectionShow()) override;
@@ -302,8 +316,24 @@ public:
 		return _parent;
 	}
 
+	void setJumpToMessageCallback(Fn<void()> callback) {
+		_jumpToMessageCallback = std::move(callback);
+	}
+	void notifyJumpToMessage() {
+		if (const auto callback = _jumpToMessageCallback) {
+			callback();
+		}
+	}
+
+protected:
+	using SearchQuery = Api::DelayedSearchController::Query;
+
+	[[nodiscard]] SearchQuery produceSearchQuery(
+		const QString &query) const;
+
 private:
 	not_null<Window::SessionController*> _parent;
+	Fn<void()> _jumpToMessageCallback;
 
 };
 
@@ -350,6 +380,8 @@ public:
 		int limitAfter) const override;
 	rpl::producer<QString> mediaSourceQueryValue() const override;
 	rpl::producer<QString> searchQueryValue() const override;
+	[[nodiscard]] Storage::SharedMediaType mediaSourceType() const;
+	void setMediaSourceType(Storage::SharedMediaType type);
 	bool takeSearchStartsFocused() {
 		return base::take(_searchStartsFocused);
 	}
@@ -374,10 +406,7 @@ public:
 	~Controller();
 
 private:
-	using SearchQuery = Api::DelayedSearchController::Query;
-
 	void updateSearchControllers(not_null<ContentMemento*> memento);
-	SearchQuery produceSearchQuery(const QString &query) const;
 	void setupMigrationViewer();
 	void setupTopicViewer();
 

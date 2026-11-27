@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/timer.h"
-#include "support/support_templates.h"
 #include "mtproto/sender.h"
+#include "support/support_templates.h"
 
 class History;
 
@@ -138,9 +138,5 @@ private:
 };
 
 QString ChatOccupiedString(not_null<History*> history);
-
-QString InterpretSendPath(
-	not_null<Window::SessionController*> window,
-	const QString &path);
 
 } // namespace Support

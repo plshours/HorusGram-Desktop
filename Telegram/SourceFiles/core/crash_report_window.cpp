@@ -38,7 +38,7 @@ constexpr auto kDefaultProxyPort = 80;
 
 } // namespace
 
-PreLaunchWindow *PreLaunchWindowInstance = nullptr;
+auto PreLaunchWindowInstance = (PreLaunchWindow*)nullptr;
 
 PreLaunchWindow::PreLaunchWindow(QString title) {
 	setWindowIcon(Window::CreateIcon());
@@ -335,7 +335,7 @@ LastCrashedWindow::LastCrashedWindow(
 	if (_sendingState != SendingNoReport) {
 		qint64 dumpsize = 0;
 		QString dumpspath = cWorkingDir() + u"tdata/dumps"_q;
-#if defined Q_OS_MAC && !defined MAC_USE_BREAKPAD
+#if defined Q_OS_MACOS && !defined MAC_USE_BREAKPAD
 		dumpspath += u"/completed"_q;
 #endif
 		QString possibleDump = getReportField(qstr("minidump"), qstr("Minidump:"));
@@ -361,7 +361,10 @@ LastCrashedWindow::LastCrashedWindow(
 				QString name = list.at(i).fileName();
 				if (name.endsWith(qstr(".dmp"))) {
 					QDateTime modified = list.at(i).lastModified();
-					if (maxDump.isEmpty() || qAbs(workingModified.secsTo(modified)) < qAbs(workingModified.secsTo(maxDumpModified))) {
+					if (maxDump.isEmpty()
+						|| std::abs(workingModified.secsTo(modified))
+							< std::abs(
+								workingModified.secsTo(maxDumpModified))) {
 						maxDump = name;
 						maxDumpModified = modified;
 						maxDumpFull = list.at(i).absoluteFilePath();
@@ -369,7 +372,8 @@ LastCrashedWindow::LastCrashedWindow(
 					}
 				}
 			}
-			if (!maxDump.isEmpty() && qAbs(workingModified.secsTo(maxDumpModified)) < 10) {
+			if (!maxDump.isEmpty()
+				&& std::abs(workingModified.secsTo(maxDumpModified)) < 10) {
 				_minidumpName = maxDump;
 				_minidumpFull = maxDumpFull;
 			}
@@ -493,7 +497,7 @@ LastCrashedWindow::LastCrashedWindow(
 	connect(&_saveReport, &QPushButton::clicked, [=] { saveReport(); });
 	_getApp.setText(u"VIEW HOURSGRAM SOURCE"_q);
 	connect(&_getApp, &QPushButton::clicked, [=] {
-		QDesktopServices::openUrl(u"https://github.com/plshours/HoursGram-Desktop"_q);
+		QDesktopServices::openUrl(u"https://github.com/plshours/HorusGram-Desktop"_q);
 	});
 
 	_send.setText(u"SEND CRASH REPORT"_q);

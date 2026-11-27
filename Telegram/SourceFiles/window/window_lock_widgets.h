@@ -7,11 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "ui/rp_widget.h"
-#include "ui/effects/animations.h"
-#include "ui/layers/box_content.h"
 #include "base/bytes.h"
 #include "base/timer.h"
+#include "ui/effects/animations.h"
+#include "ui/layers/box_content.h"
+#include "ui/rp_widget.h"
 
 namespace base {
 enum class SystemUnlockResult;
@@ -32,6 +32,23 @@ namespace Window {
 
 class Controller;
 class SlideAnimation;
+
+enum class PasscodeAttempt : uchar {
+	Empty,
+	Flood,
+	Busy,
+	Started,
+};
+
+// Empty and Flood are answered at once, before any derivation. Otherwise the
+// derivation runs on a worker and done runs on the main thread with the
+// verdict, after the bad tries counters were bumped for a wrong one. Busy
+// while any lock screen's attempt is in flight: nothing starts and done is
+// never invoked. Does not unlock: Core::App().unlockPasscode() destroys the
+// main lock screen widget, so the caller runs it as its own last statement.
+[[nodiscard]] PasscodeAttempt TryPasscode(
+	const QString &passcode,
+	Fn<void(bool correct)> done);
 
 class LockWidget : public Ui::RpWidget {
 public:
@@ -81,6 +98,7 @@ private:
 	void changed();
 	void submit();
 	void error();
+	void setDeriving(bool deriving);
 
 	rpl::variable<SystemUnlockType> _systemUnlockAvailable;
 	rpl::variable<SystemUnlockType> _systemUnlockAllowed;

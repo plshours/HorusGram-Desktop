@@ -7,31 +7,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "storage/localstorage.h"
 
-#include "storage/serialize_common.h"
-#include "storage/storage_account.h"
-#include "storage/details/storage_file_utilities.h"
-#include "storage/details/storage_settings_scheme.h"
-#include "data/data_session.h"
-#include "data/data_document.h"
-#include "data/data_document_media.h"
 #include "base/platform/base_platform_info.h"
 #include "base/random.h"
-#include "ui/power_saving.h"
-#include "core/update_checker.h"
-#include "core/file_location.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "core/file_location.h"
+#include "core/update_checker.h"
 #include "core/version.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_session.h"
+#include "lang/lang_instance.h"
+#include "main/main_account.h"
+#include "main/main_domain.h"
+#include "main/main_session.h"
 #include "media/audio/media_audio.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/mtproto_dc_options.h"
-#include "main/main_domain.h"
-#include "main/main_account.h"
-#include "main/main_session.h"
+#include "storage/details/storage_file_utilities.h"
+#include "storage/details/storage_settings_scheme.h"
+#include "storage/serialize_common.h"
+#include "storage/storage_account.h"
+#include "ui/power_saving.h"
 #include "window/themes/window_theme.h"
-#include "lang/lang_instance.h"
+#include "window/window_saved_windows.h"
 
 #include <QtCore/QDirIterator>
+#include <QtCore/QSaveFile>
 
 #ifndef Q_OS_WIN
 #include <unistd.h>
@@ -65,7 +67,7 @@ using Database = Storage::Cache::Database;
 
 QString _basePath, _userBasePath, _userDbPath;
 
-TaskQueue *_localLoader = nullptr;
+auto _localLoader = (TaskQueue*)nullptr;
 
 QByteArray _settingsSalt;
 
@@ -547,7 +549,7 @@ QString autoupdatePrefixFile() {
 }
 
 constexpr auto kUpdatePrefix
-	= "https://github.com/plshours/HoursGram-Desktop/releases/";
+	= "https://github.com/plshours/HorusGram-Desktop/releases/";
 
 const QString &readAutoupdatePrefixRaw() {
 	Expects(!Core::UpdaterDisabled());
@@ -595,6 +597,59 @@ QString readAutoupdatePrefix() {
 	static const auto RegExp = QRegularExpression("/+$");
 	auto result = readAutoupdatePrefixRaw();
 	return result.replace(RegExp, QString());
+}
+
+QString updateManifestFile() {
+	Expects(!Core::UpdaterDisabled());
+
+	return cWorkingDir() + "tdata/update-manifest";
+}
+
+// The file holds the detached 64-byte root Ed25519 signature followed by
+// the manifest JSON verbatim. The content is attacker-reachable bytes as
+// far as readers are concerned: the caller verifies it against the pinned
+// root key after reading.
+void writeUpdateManifest(
+		const QByteArray &manifest,
+		const QByteArray &signature) {
+	if (Core::UpdaterDisabled()
+		|| signature.size() != 64
+		|| manifest.isEmpty()) {
+		return;
+	}
+	QSaveFile f(updateManifestFile());
+	if (!f.open(QIODevice::WriteOnly)
+		|| f.write(signature) != signature.size()
+		|| f.write(manifest) != manifest.size()
+		|| !f.commit()) {
+		LOG(("Storage Error: Could not write the update manifest: %1."
+			).arg(f.errorString()));
+	}
+}
+
+bool readUpdateManifest(QByteArray *manifest, QByteArray *signature) {
+	Expects(manifest != nullptr && signature != nullptr);
+
+	if (Core::UpdaterDisabled()) {
+		return false;
+	}
+	constexpr auto kSignatureSize = 64;
+	constexpr auto kMaxManifestSize = 256 * 1024;
+	const auto info = QFileInfo(updateManifestFile());
+	QFile f(info.filePath());
+	if (info.isSymLink()
+		|| !info.isFile()
+		|| !f.open(QIODevice::ReadOnly)) {
+		return false;
+	}
+	const auto content = f.read(kSignatureSize + kMaxManifestSize + 1);
+	if (content.size() <= kSignatureSize
+		|| content.size() > kSignatureSize + kMaxManifestSize) {
+		return false;
+	}
+	*signature = content.left(kSignatureSize);
+	*manifest = content.mid(kSignatureSize);
+	return true;
 }
 
 void writeBackground(const Data::WallPaper &paper, const QImage &image) {
@@ -809,6 +864,10 @@ void reset() {
 	Window::Theme::Background()->reset();
 	_oldSettingsVersion = 0;
 	Core::App().settings().resetOnLastLogout();
+	Core::App().reseedWindowInSettings();
+	if (const auto saved = Core::App().savedWindows()) {
+		saved->resetOnLastLogout();
+	}
 	writeSettings();
 }
 
@@ -1331,7 +1390,7 @@ std::vector<Lang::Language> readRecentLanguages() {
 Window::Theme::Object ReadThemeContent() {
 	using namespace Window::Theme;
 
-	auto &themeKey = IsNightMode() ? _themeKeyNight : _themeKeyDay;
+	const auto &themeKey = IsNightMode() ? _themeKeyNight : _themeKeyDay;
 	if (!themeKey) {
 		return Object();
 	}
@@ -1359,7 +1418,7 @@ void incrementRecentHashtag(RecentHashtagPack &recent, const QString &tag) {
 	for (; i != e; ++i) {
 		if (i->first == tag) {
 			++i->second;
-			if (qAbs(i->second) > 0x4000) {
+			if (i->second > 0x4000) {
 				for (auto j = recent.begin(); j != e; ++j) {
 					if (j->second > 1) {
 						j->second /= 2;
@@ -1369,22 +1428,22 @@ void incrementRecentHashtag(RecentHashtagPack &recent, const QString &tag) {
 				}
 			}
 			for (; i != recent.begin(); --i) {
-				if (qAbs((i - 1)->second) > qAbs(i->second)) {
+				if ((i - 1)->second > i->second) {
 					break;
 				}
-				qSwap(*i, *(i - 1));
+				std::swap(*i, *(i - 1));
 			}
 			break;
 		}
 	}
 	if (i == e) {
 		while (recent.size() >= 64) recent.pop_back();
-		recent.push_back(qMakePair(tag, 1));
+		recent.push_back({ tag, 1 });
 		for (i = recent.end() - 1; i != recent.begin(); --i) {
 			if ((i - 1)->second > i->second) {
 				break;
 			}
-			qSwap(*i, *(i - 1));
+			std::swap(*i, *(i - 1));
 		}
 	}
 }

@@ -9,35 +9,40 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_credits.h"
 #include "api/api_global_privacy.h"
+#include "api/api_peer_photo.h"
 #include "api/api_sensitive_content.h"
+#include "api/api_share_themes.h"
 #include "api/api_statistics.h"
 #include "api/api_text_entities.h"
+#include "apiwrap.h"
 #include "base/timer_rpl.h"
 #include "core/application.h"
-#include "storage/localstorage.h"
-#include "storage/storage_account.h"
-#include "storage/storage_user_photos.h"
-#include "main/main_session.h"
 #include "data/business/data_business_common.h"
 #include "data/business/data_business_info.h"
 #include "data/components/credits.h"
+#include "data/notify/data_notify_settings.h"
+#include "data/data_changes.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_forum.h"
 #include "data/data_forum_icons.h"
-#include "data/data_saved_music.h"
-#include "data/data_session.h"
-#include "data/data_changes.h"
 #include "data/data_peer_bot_command.h"
 #include "data/data_photo.h"
+#include "data/data_saved_music.h"
+#include "data/data_session.h"
 #include "data/data_stories.h"
+#include "data/data_user_wallet_card.h"
 #include "data/data_wall_paper.h"
-#include "data/notify/data_notify_settings.h"
 #include "history/history.h"
 #include "hoursgram/index/peer_index.h"
 #include "history/history_item.h"
-#include "api/api_peer_photo.h"
-#include "apiwrap.h"
 #include "lang/lang_keys.h"
+#include "main/main_app_config.h"
+#include "main/main_session.h"
+#include "storage/localstorage.h"
+#include "storage/storage_account.h"
+#include "storage/storage_user_photos.h"
+#include "wallet/wallet_own_card.h"
+#include "wallet/wallet_session.h"
 #include "window/notifications_manager.h"
 
 // HorusGram includes
@@ -52,6 +57,17 @@ constexpr auto kSetOnlineAfterActivity = TimeId(30);
 
 using UpdateFlag = Data::PeerUpdate::Flag;
 
+[[nodiscard]] TextWithEntities ParseBotVerificationText(
+		const MTPTextWithEntities &text) {
+	auto result = Api::ParseTextWithEntities(nullptr, text);
+	result.entities.erase(
+		ranges::remove_if(result.entities, [](const EntityInText &entity) {
+			return entity.type() != EntityType::CustomUrl;
+		}),
+		result.entities.end());
+	return result;
+}
+
 bool ApplyBotVerifierSettings(
 		not_null<BotInfo*> info,
 		const MTPBotVerifierSettings *settings) {
@@ -63,7 +79,9 @@ bool ApplyBotVerifierSettings(
 	const auto parsed = BotVerifierSettings{
 		.iconId = DocumentId(data.vicon().v),
 		.company = qs(data.vcompany()),
-		.customDescription = qs(data.vcustom_description().value_or_empty()),
+		.customDescription = (data.vcustom_description()
+			? ParseBotVerificationText(*data.vcustom_description())
+			: TextWithEntities()),
 		.canModifyDescription = data.is_can_modify_custom_description(),
 	};
 	if (!info->verifierSettings) {
@@ -115,6 +133,15 @@ std::unique_ptr<Data::Forum> BotInfo::takeForumData() {
 		return result;
 	}
 	return nullptr;
+}
+
+void BotInfo::setInlineReturnTo(Dialogs::EntryState state) {
+	_inlineReturnThread = state.key.thread();
+	_inlineReturnTo = std::move(state);
+}
+
+Dialogs::EntryState BotInfo::inlineReturnTo() const {
+	return _inlineReturnThread ? _inlineReturnTo : Dialogs::EntryState();
 }
 
 Data::LastseenStatus LastseenFromMTP(
@@ -221,16 +248,31 @@ void UserData::setPeerGiftsCount(int count) {
 	}
 }
 
-bool UserData::hasPrivateForwardName() const {
-	return !_privateForwardName.isEmpty();
+const std::optional<QString> &UserData::gramAddress() const {
+	return _gramAddress;
 }
 
-QString UserData::privateForwardName() const {
-	return _privateForwardName;
+void UserData::setGramAddress(QString address) {
+	_gramAddress = std::move(address);
 }
 
-void UserData::setPrivateForwardName(const QString &name) {
-	_privateForwardName = name;
+const Data::WalletCard *UserData::walletCard() const {
+	return _walletCard.get();
+}
+
+void UserData::setWalletCard(std::optional<Data::WalletCard> card) {
+	if ((!card && !_walletCard)
+		|| (card && _walletCard && *card == *_walletCard)) {
+		return;
+	}
+	if (!card) {
+		_walletCard = nullptr;
+	} else if (_walletCard) {
+		*_walletCard = std::move(*card);
+	} else {
+		_walletCard = std::make_unique<Data::WalletCard>(std::move(*card));
+	}
+	session().changes().peerUpdated(this, UpdateFlag::WalletCard);
 }
 
 bool UserData::hasActiveStories() const {
@@ -498,6 +540,7 @@ void UserData::setBotInfo(const MTPBotInfo &info) {
 			botInfo.get(),
 			d.vmenu_button());
 		botInfo->inited = true;
+		botInfo->hasPreviewMedias = d.is_has_preview_medias();
 
 		const auto privacy = qs(d.vprivacy_policy_url().value_or_empty());
 		const auto privacyChanged = (botInfo->privacyPolicyUrl != privacy);
@@ -743,10 +786,6 @@ Data::StarsRating UserData::starsRating() const {
 	return _starsRating;
 }
 
-bool UserData::canAddContact() const {
-	return canShareThisContact() && !isContact();
-}
-
 bool UserData::canShareThisContactFast() const {
 	return !_phone.isEmpty();
 }
@@ -765,6 +804,19 @@ const std::vector<QString> &UserData::usernames() const {
 
 bool UserData::isUsernameEditable(QString username) const {
 	return _username.isEditable(username);
+}
+
+bool UserData::isOldWalletBot() const {
+	if (!isBot()) {
+		return false;
+	}
+	const auto configured = session().appConfig().oldWalletBotUsername();
+	if (configured.isEmpty()) {
+		return false;
+	}
+	return ranges::any_of(usernames(), [&](const QString &username) {
+		return !username.compare(configured, Qt::CaseInsensitive);
+	});
 }
 
 void UserData::setBotVerifyDetails(Ui::BotVerifyDetails details) {
@@ -804,6 +856,18 @@ UserData::ContactStatus UserData::contactStatus() const {
 
 bool UserData::isContact() const {
 	return (contactStatus() == ContactStatus::Contact);
+}
+
+bool UserData::isCloseFriend() const {
+	return (flags() & UserDataFlag::CloseFriend);
+}
+
+void UserData::setIsCloseFriend(bool is) {
+	if (is) {
+		addFlags(UserDataFlag::CloseFriend);
+	} else {
+		removeFlags(UserDataFlag::CloseFriend);
+	}
 }
 
 UserData::CallsStatus UserData::callsStatus() const {
@@ -873,7 +937,9 @@ void UserData::setNote(const TextWithEntities &note) {
 
 namespace Data {
 
-void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
+void ApplyUserUpdate(
+		not_null<UserData*> user,
+		const MTPDuserFull &update) {
 	const auto profilePhoto = update.vprofile_photo()
 		? user->owner().processPhoto(*update.vprofile_photo()).get()
 		: nullptr;
@@ -904,6 +970,9 @@ void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
 		user->setBotInfo(*info);
 	} else {
 		user->setBotInfoVersion(-1);
+		if (const auto info = user->botInfo.get()) {
+			info->hasPreviewMedias = false;
+		}
 	}
 	if (const auto info = user->botInfo.get()) {
 		info->canManageEmojiStatus = update.is_bot_can_manage_emoji_status();
@@ -970,8 +1039,6 @@ void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
 		user->setThemeToken(QString());
 	}
 	user->setTranslationDisabled(update.is_translations_disabled());
-	user->setPrivateForwardName(
-		update.vprivate_forward_name().value_or_empty());
 
 	if (const auto info = user->botInfo.get()) {
 		const auto group = update.vbot_group_admin_rights()
@@ -1108,6 +1175,18 @@ void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
 		update.is_noforwards_my_enabled(),
 		update.is_noforwards_peer_enabled());
 
+	const auto card = update.vwallet_card();
+	auto parsed = card
+		? std::optional(ParseWalletCard(&user->session(), *card))
+		: std::nullopt;
+	if (user->isSelf()) {
+		user->session().wallet().ownCard().applyFullUserCard(std::move(parsed));
+	} else {
+		user->setWalletCard(std::move(parsed));
+	}
+
+	user->session().api().shareThemes().apply(user, update.vshare_theme());
+
 	user->fullUpdated();
 }
 
@@ -1130,12 +1209,10 @@ Ui::BotVerifyDetails ParseBotVerifyDetails(const MTPBotVerification *info) {
 		return {};
 	}
 	const auto &data = info->data();
-	const auto description = qs(data.vdescription());
-	const auto flags = TextParseLinks;
 	return {
 		.botId = UserId(data.vbot_id().v),
 		.iconId = DocumentId(data.vicon().v),
-		.description = TextUtilities::ParseEntities(description, flags),
+		.description = ParseBotVerificationText(data.vdescription()),
 	};
 }
 

@@ -7,13 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "window/section_widget.h"
-#include "window/section_memento.h"
-#include "history/view/history_view_list_widget.h"
-#include "history/view/history_view_corner_buttons.h"
 #include "data/data_messages.h"
+#include "history/view/history_view_corner_buttons.h"
+#include "history/view/history_view_list_widget.h"
+#include "window/section_memento.h"
+#include "window/section_widget.h"
 
 class History;
+class SendFilesBox;
 enum class SendMediaType;
 struct SendingAlbum;
 
@@ -33,6 +34,7 @@ namespace Api {
 struct MessageToSend;
 struct SendOptions;
 struct SendAction;
+struct VideoCoverEdit;
 } // namespace Api
 
 namespace Ui {
@@ -96,6 +98,8 @@ public:
 		not_null<Window::SectionMemento*> memento,
 		const Window::SectionShow &params) override;
 	std::shared_ptr<Window::SectionMemento> createMemento() override;
+	auto createIdentityMemento()
+		-> std::shared_ptr<Window::SectionMemento> override;
 	bool showMessage(
 		PeerId peerId,
 		const Window::SectionShow &params,
@@ -206,6 +210,8 @@ private:
 	void updateInnerVisibleArea();
 	void updateControlsGeometry();
 	void updateAdaptiveLayout();
+	[[nodiscard]] auto createIdentityMementoTyped()
+		-> std::shared_ptr<ScheduledMemento>;
 	void saveState(not_null<ScheduledMemento*> memento);
 	void restoreState(not_null<ScheduledMemento*> memento);
 	void showAtPosition(
@@ -219,6 +225,7 @@ private:
 	void clearProcessingVideoTracking(bool fast);
 
 	void setupComposeControls();
+	void topicDestroyed();
 
 	void setupDragArea();
 
@@ -238,7 +245,8 @@ private:
 		not_null<HistoryItem*> item,
 		Api::SendOptions options,
 		mtpRequestId *const saveEditMsgRequestId,
-		bool spoilered);
+		bool spoilered,
+		Api::VideoCoverEdit videoCover);
 	void highlightSingleNewMessage(const Data::MessagesSlice &slice);
 	void chooseAttach();
 	[[nodiscard]] SendMenu::Details sendMenuDetails() const override;
@@ -291,6 +299,7 @@ private:
 	object_ptr<TopBarWidget> _topBar;
 	object_ptr<Ui::PlainShadow> _topBarShadow;
 	std::unique_ptr<ComposeControls> _composeControls;
+	QPointer<SendFilesBox> _sendFilesBox;
 	bool _skipScrollEvent = false;
 
 	Data::MessagePosition _processingVideoPosition;
@@ -328,6 +337,10 @@ public:
 		return _history;
 	}
 
+	[[nodiscard]] const Data::ForumTopic *forumTopic() const {
+		return _forumTopic;
+	}
+
 	[[nodiscard]] not_null<ListMemento*> list() {
 		return &_list;
 	}
@@ -336,9 +349,11 @@ public:
 		return _sentToScheduledId;
 	}
 
+	Data::ForumTopic *topicForRemoveRequests() const override;
+
 private:
 	const not_null<History*> _history;
-	const Data::ForumTopic *_forumTopic;
+	Data::ForumTopic *_forumTopic;
 	ListMemento _list;
 	MsgId _sentToScheduledId = 0;
 

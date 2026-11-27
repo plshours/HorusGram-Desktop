@@ -7,18 +7,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/media/history_view_invoice.h"
 
-#include "lang/lang_keys.h"
-#include "history/view/history_view_element.h"
-#include "history/view/history_view_cursor_state.h"
-#include "history/view/media/history_view_photo.h"
+#include "data/data_media_types.h"
 #include "history/view/media/history_view_media_common.h"
-#include "ui/item_text_options.h"
+#include "history/view/media/history_view_photo.h"
+#include "history/view/history_view_cursor_state.h"
+#include "history/view/history_view_element.h"
+#include "lang/lang_keys.h"
 #include "ui/chat/chat_style.h"
 #include "ui/text/format_values.h"
 #include "ui/cached_round_corners.h"
+#include "ui/item_text_options.h"
 #include "ui/painter.h"
 #include "ui/power_saving.h"
-#include "data/data_media_types.h"
+
 #include "styles/style_chat.h"
 
 namespace {
@@ -34,8 +35,8 @@ TextSelection ClampSelection(TextSelection selection, uint16 length) {
 	return (selection == FullSelection)
 		? selection
 		: TextSelection{
-			qMin(selection.from, length),
-			qMin(selection.to, length),
+			std::min(selection.from, length),
+			std::min(selection.to, length),
 		};
 }
 
@@ -85,7 +86,7 @@ void Invoice::fillFromData(not_null<Data::Invoice*> invoice) {
 			EntityType::Bold,
 			0,
 			int(statusText.text.size()) });
-		statusText.text += ' ' + labelText().toUpper();
+		statusText.text += ' ' + Ui::Text::Upper(labelText());
 		_status.setMarkedText(
 			st::defaultTextStyle,
 			statusText,
@@ -142,7 +143,7 @@ QSize Invoice::countOptimalSize() {
 	// enable any count of lines in game description / message
 	auto descMaxLines = 4096;
 	auto descriptionMinHeight = _descriptionTextLength
-		? qMin(_description.minHeight(), descMaxLines * lineHeight)
+		? std::min(_description.minHeight(), descMaxLines * lineHeight)
 		: 0;
 
 	if (_titleTextLength) {
@@ -351,7 +352,7 @@ TextState Invoice::textState(QPoint point, StateRequest request) const {
 				paintw,
 				width(),
 				titleRequest));
-			result.symbol = qMin(result.symbol, _titleTextLength);
+			result.symbol = std::min(result.symbol, _titleTextLength);
 		} else if (point.y() >= tshift + _titleHeight) {
 			symbolAdd += _titleTextLength;
 		}
@@ -364,7 +365,7 @@ TextState Invoice::textState(QPoint point, StateRequest request) const {
 				paintw,
 				width(),
 				request.forText()));
-			result.symbol = qMin(result.symbol, _descriptionTextLength);
+			result.symbol = std::min(result.symbol, _descriptionTextLength);
 		} else if (point.y() >= tshift + _descriptionHeight) {
 			symbolAdd += _descriptionTextLength;
 		}

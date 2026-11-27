@@ -71,6 +71,7 @@ ComposeIcons {
 	menuSetShare: icon;
 	menuSetCopyLink: icon;
 	menuSetRemove: icon;
+	menuEmojiStatus: icon;
 	menuEmojiCopy: icon;
 	menuEmojiViewPack: icon;
 	menuEmojiRemoveRecent: icon;
@@ -78,10 +79,13 @@ ComposeIcons {
 	menuUnmute: icon;
 	menuSchedule: icon;
 	menuWhenOnline: icon;
+	menuReply: icon;
 	menuSpoiler: icon;
 	menuBelow: icon;
 	menuAbove: icon;
 	menuQualityHigh: icon;
+	menuCover: icon;
+	menuCoverRemove: icon;
 	menuPrice: icon;
 	menuEditStars: icon;
 
@@ -120,6 +124,7 @@ EmojiPan {
 	trendingSubheaderFg: color;
 	trendingUnreadFg: color;
 	overBg: color;
+	markedBg: color;
 	pathBg: color;
 	pathFg: color;
 	textFg: color;
@@ -132,6 +137,7 @@ EmojiPan {
 	expandedSeparator: MenuSeparator;
 	tabs: SettingsSlider;
 	search: TabbedSearch;
+	scroll: ScrollArea;
 	searchMargin: margins;
 	searchPacksTop: pixels;
 	searchPackWidth: pixels;
@@ -151,6 +157,10 @@ EmojiPan {
 	searchBackIconTop: pixels;
 	searchBackTextLeft: pixels;
 	searchBackTextTop: pixels;
+	photoButtonIcon: icon;
+	audioButtonIcon: icon;
+	linkButtonIcon: icon;
+	locationButtonIcon: icon;
 	colorAll: IconButton;
 	colorAllLabel: FlatLabel;
 	removeSet: IconButton;
@@ -185,6 +195,8 @@ SendButton {
 	recordSize: size;
 	sendDisabledFg: color;
 	sendIconFg: color;
+	stopSize: size;
+	stopRadius: pixels;
 }
 
 RecordBarLock {
@@ -220,6 +232,7 @@ ComposeFiles {
 	buttonFile: IconButton;
 	buttonFileEdit: icon;
 	buttonFileDelete: icon;
+	selectCheck: RoundCheckbox;
 	iconBg: color;
 	iconPlay: icon;
 	iconImage: icon;
@@ -451,6 +464,30 @@ stickersScroll: ScrollArea(boxScroll) {
 	deltat: 19px;
 	deltab: 9px;
 }
+stickerSetBox: Box(defaultBox) {
+	buttonPadding: margins(16px, 12px, 16px, 12px);
+	buttonHeight: 42px;
+	buttonWide: true;
+	button: RoundButton(defaultActiveButton) {
+		height: 42px;
+		textTop: 12px;
+		style: semiboldTextStyle;
+	}
+}
+stickerSetBoxRemoveButton: RoundButton(attentionBoxButton) {
+	height: 42px;
+	textTop: 12px;
+	style: semiboldTextStyle;
+}
+stickerSetBoxMenu: IconButton(boxTitleClose) {
+	width: 40px;
+
+	icon: icon {{ "title_menu_dots", boxTitleCloseFg }};
+	iconOver: icon {{ "title_menu_dots", boxTitleCloseFgOver }};
+
+	rippleAreaPosition: point(0px, 4px);
+}
+stickerSetBoxBadgeSkip: 6px;
 stickersRowDisabledOpacity: 0.4;
 stickersRowDuration: 200;
 
@@ -459,6 +496,7 @@ stickersAddCellPlusThickness: 2px;
 stickersAddCellBgRadius: 28px;
 emojiSetAddCellPlusSize: 13px;
 emojiSetAddCellBgRadius: 16px;
+stickersAddPanelSkip: 8px;
 
 stickersEmojiPickerSelectedBg: windowBgActive;
 
@@ -601,6 +639,21 @@ stickerIconMove: 400;
 stickerPreviewDuration: 150;
 stickerPreviewMin: 0.1;
 stickerPanFirstAfterShortcutsSkip: 4px;
+stickersPhotoRowPadding: margins(0px, 12px, 0px, 12px);
+stickersPhotoButtonHeight: 36px;
+stickersPhotoButtonRadius: 8px;
+stickersPhotoButtonPadding: margins(6px, 0px, 12px, 0px);
+stickersPhotoButtonIconSkip: 4px;
+stickersPhotoButtonEmojiSize: 24px;
+stickersPhotoButtonFont: font(14px bold);
+stickersWidgetReactionIcon: 20px;
+stickersReactionCloud: 32px;
+stickersReactionCloudShift: point(-2px, -1px);
+stickersReactionBubble: 10px;
+stickersReactionBubbleShift: point(11px, 9px);
+stickersReactionDot: 4px;
+stickersReactionDotShift: point(17px, 15px);
+stickersPhotoButtonSkip: 10px;
 mediaPreviewPhotoSkip: 48px;
 
 emojiPanColorAll: IconButton(stickerPanRemoveSet) {
@@ -666,6 +719,9 @@ sendBoxAlbumGroupButtonFile: IconButton(editMediaButton) {
 }
 sendBoxAlbumGroupEditButtonIconFile: editMediaButtonIconFile;
 sendBoxAlbumGroupDeleteButtonIconFile: icon {{ "send_media/send_media_cross", menuIconFg }};
+sendBoxFileSelectCheck: RoundCheckbox(defaultPeerListCheck) {
+	bgActive: boxTextFgGood;
+}
 
 sendBoxAlbumButtonMediaMore: icon {{ "send_media/send_media_more", roundedFg }};
 sendBoxAlbumGroupButtonMediaMore: icon {{ "send_media/send_media_more", roundedFg, point(4px, 1px) }};
@@ -703,6 +759,7 @@ defaultComposeIcons: ComposeIcons {
 	menuSetShare: menuIconShare;
 	menuSetCopyLink: menuIconLink;
 	menuSetRemove: menuIconDelete;
+	menuEmojiStatus: menuIconEmoji;
 	menuEmojiCopy: menuIconCopy;
 	menuEmojiViewPack: menuIconShowAll;
 	menuEmojiRemoveRecent: menuIconCancel;
@@ -710,10 +767,13 @@ defaultComposeIcons: ComposeIcons {
 	menuUnmute: menuIconUnmute;
 	menuSchedule: menuIconSchedule;
 	menuWhenOnline: menuIconWhenOnline;
+	menuReply: menuIconReply;
 	menuSpoiler: menuIconSpoiler;
 	menuBelow: menuIconBelow;
 	menuAbove: menuIconAbove;
 	menuQualityHigh: menuIconQualityHigh;
+	menuCover: menuIconEdit;
+	menuCoverRemove: menuIconCancel;
 	menuPrice: menuIconEarn;
 
 	stripBubble: icon{
@@ -737,6 +797,14 @@ defaultEmojiPanAbout: FlatLabel(defaultFlatLabel) {
 		font: font(11px);
 	}
 }
+emojiScroll: ScrollArea(defaultSolidScroll) {
+	deltat: 3px;
+	deltab: 3px;
+	round: -1px;
+	width: 7px;
+	deltax: 2px;
+	hiding: 0;
+}
 defaultEmojiPan: EmojiPan {
 	margin: margins(7px, 0px, 7px, 0px);
 	padding: margins(7px, 0px, 4px, 7px);
@@ -758,6 +826,7 @@ defaultEmojiPan: EmojiPan {
 	trendingSubheaderFg: stickersTrendingSubheaderFg;
 	trendingUnreadFg: stickersFeaturedUnreadBg;
 	overBg: emojiPanHover;
+	markedBg: stickersEmojiPickerSelectedBg;
 	pathBg: windowBgRipple;
 	pathFg: windowBgOver;
 	textFg: windowFg;
@@ -773,6 +842,7 @@ defaultEmojiPan: EmojiPan {
 	}
 	tabs: emojiTabs;
 	search: defaultTabbedSearch;
+	scroll: emojiScroll;
 	searchMargin: margins(1px, 11px, 2px, 5px);
 	searchPacksTop: 0px;
 	searchPackWidth: 70px;
@@ -792,6 +862,10 @@ defaultEmojiPan: EmojiPan {
 	searchBackIconTop: 6px;
 	searchBackTextLeft: 40px;
 	searchBackTextTop: 10px;
+	photoButtonIcon: icon {{ "photo_editor/camera-24x24", windowFg }};
+	audioButtonIcon: icon {{ "photo_editor/widget_music", windowFg }};
+	linkButtonIcon: icon {{ "limits/links", windowFg }};
+	locationButtonIcon: icon {{ "chat/filled_location", windowFg }};
 	colorAll: emojiPanColorAll;
 	colorAllLabel: emojiPanColorAllLabel;
 	removeSet: stickerPanRemoveSet;
@@ -907,14 +981,6 @@ userpicBuilderEmojiPan: EmojiPan(statusEmojiPan) {
 reactPanelEmojiPan: EmojiPan(userpicBuilderEmojiPan) {
 	searchMargin: margins(1px, 10px, 2px, 6px);
 }
-emojiScroll: ScrollArea(defaultSolidScroll) {
-	deltat: 3px;
-	deltab: 3px;
-	round: -1px;
-	width: 7px;
-	deltax: 2px;
-	hiding: 0;
-}
 reactPanelScroll: ScrollArea(emojiScroll) {
 	deltab: 7px;
 }
@@ -927,6 +993,11 @@ reactPanelScrollRounded: ScrollArea(emojiScroll) {
 selfForwardsTaggerStripSkip: 11px;
 
 toastLottieIconSize: size(20px, 20px);
+textCopiedToastLoading: InfiniteRadialAnimation(defaultInfiniteRadialAnimation) {
+	color: toastFg;
+	thickness: 2px;
+	size: toastLottieIconSize;
+}
 selfForwardsTaggerIconPadding: margins(14px, 2px, 8px, 2px);
 selfForwardsTaggerToast: Toast(defaultToast) {
 	minWidth: 160px;
@@ -1062,6 +1133,7 @@ historyBusinessBotPhoto: UserpicButton(defaultUserpicButton) {
 }
 historyBusinessBotName: FlatLabel(defaultFlatLabel) {
 	style: semiboldTextStyle;
+	maxHeight: 20px;
 }
 historyBusinessBotStatus: FlatLabel(historyContactStatusLabel) {
 	textFg: windowSubTextFg;
@@ -1211,6 +1283,16 @@ historyUnreadPollVotes: TwoIconButton(historyToDown) {
 	iconAbove: icon {{ "history_unread_poll_vote-40x40", historyToDownFg, point(6px, 6px) }};
 	iconAboveOver: icon {{ "history_unread_poll_vote-40x40", historyToDownFgOver, point(6px, 6px) }};
 }
+historyStash: TwoIconButton(historyToDown) {
+	iconAbove: icon {{ "history_stash_bubble-40x40", historyToDownFg, point(6px, 6px) }};
+	iconAboveOver: icon {{ "history_stash_bubble-40x40", historyToDownFgOver, point(6px, 6px) }};
+}
+historyStashArrow: icon {{ "history_stash_arrow-40x40", historyToDownFg, point(6px, 6px) }};
+historyStashArrowOver: icon {{ "history_stash_arrow-40x40", historyToDownFgOver, point(6px, 6px) }};
+historyStashArrowClipPosition: point(18px, 28px);
+historyStashArrowClipSize: size(16px, 12px);
+historyStashArrowTravel: 12px;
+historyStashBubbleTravel: 4px;
 historyUnreadThingsSkip: 4px;
 
 historyQuoteStyle: QuoteStyle(defaultQuoteStyle) {
@@ -1291,6 +1373,7 @@ historyMessagesTTL: IconButtonWithText {
 	textAlign: align(left);
 
 	font: font(10px semibold);
+	minFontSize: 7px;
 }
 historyReplaceMedia: IconButton(historyAttach) {
 	icon: icon {{ "chat/input_replace", windowBgActive }};
@@ -1479,6 +1562,8 @@ historySend: SendButton {
 	recordSize: size(26px, 26px);
 	sendDisabledFg: historyComposeIconFg;
 	sendIconFg: historySendIconFg;
+	stopSize: size(14px, 14px);
+	stopRadius: 3px;
 }
 historyAiComposeButton: IconButton(historyAttach) {
 	width: 28px;
@@ -1543,6 +1628,7 @@ defaultComposeFiles: ComposeFiles {
 	buttonFile: sendBoxAlbumGroupButtonFile;
 	buttonFileEdit: sendBoxAlbumGroupEditButtonIconFile;
 	buttonFileDelete: sendBoxAlbumGroupDeleteButtonIconFile;
+	selectCheck: sendBoxFileSelectCheck;
 	iconBg: msgFileInBg;
 	iconPlay: icon {{ "history_file_play", historyFileInIconFg }};
 	iconImage: icon {{ "history_file_image", historyFileInIconFg }};
@@ -1663,6 +1749,10 @@ dragDropColor: windowActiveTextFg;
 dragMargin: margins(0px, 10px, 0px, 10px);
 dragPadding: margins(20px, 10px, 20px, 10px);
 dragHeight: 72px;
+dragIconSkip: 4px;
+dragIconMedia: icon {{ "local_storage/photos-64x64", dragColor }};
+dragIconFiles: icon {{ "local_storage/documents-64x64", dragColor }};
+dragIconArchive: icon {{ "chat/large_zip-64x64", dragColor }};
 
 ttlMediaImportantTooltipLabel: FlatLabel(defaultImportantTooltipLabel) {
 	style: TextStyle(defaultTextStyle) {

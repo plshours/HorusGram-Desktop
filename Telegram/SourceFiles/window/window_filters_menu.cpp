@@ -19,6 +19,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_instance.h"
 #include "ui/widgets/buttons.h"
 #include "main/main_session.h"
+#include "api/api_chat_filters.h"
+#include "apiwrap.h"
 #include "base/event_filter.h"
 #include "base/options.h"
 #include "core/application.h"
@@ -46,6 +48,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/filters/edit_filter_box.h"
 #include "boxes/choose_filter_box.h"
 #include "boxes/premium_limits_box.h"
+#include "core/application.h"
+#include "core/core_settings.h"
+#include "core/ui_integration.h"
+#include "data/data_chat_filters.h"
+#include "data/data_peer_values.h"
+#include "data/data_premium_limits.h"
+#include "data/data_session.h"
+#include "data/data_unread_value.h"
+#include "data/data_user.h"
+#include "lang/lang_keys.h"
+#include "main/main_session.h"
+#include "mainwindow.h"
+#include "menu/menu_mark_as_read.h"
 #include "settings/sections/settings_folders.h"
 #include "storage/storage_media_prepare.h"
 #include "api/api_chat_filters.h"
@@ -54,12 +69,31 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_window.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_hoursgram_design.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/popup_menu.h"
+#include "ui/wrap/slide_wrap.h"
+#include "ui/wrap/vertical_layout.h"
+#include "ui/wrap/vertical_layout_reorder.h"
+#include "ui/filter_icons.h"
+#include "ui/filter_title_icon.h"
+#include "ui/power_saving.h"
+#include "ui/screen_reader_mode.h"
+#include "ui/ui_utility.h"
+#include "window/window_controller.h"
+#include "window/window_filters_favorite.h"
+#include "window/window_main_menu.h"
+#include "window/window_peer_menu.h"
+#include "window/window_session_controller.h"
 
 #include <QtGui/QtEvents>
 
 // HorusGram includes
 #include "ayu/ayu_settings.h"
 
+#include "styles/style_menu_icons.h"
+#include "styles/style_widgets.h"
+#include "styles/style_window.h"
 
 namespace Window {
 namespace {
@@ -137,6 +171,13 @@ void FiltersMenu::setup() {
 
 	_outer.setAttribute(Qt::WA_OpaquePaintEvent);
 	_outer.show();
+
+	// Keep the sidebar's Tab chain in visual order: the main menu button
+	// above the scroll area, and inside it the folders list (entered at
+	// its roving Tab-stop), the favorite link and the edit button - even
+	// as folders are reordered and the favorite appears or disappears.
+	_outer.setVisualTabOrder(true);
+	_container->setVisualTabOrder(true);
 	_outer.paintRequest(
 	) | rpl::on_next([=](QRect clip) {
 		auto p = QPainter(&_outer);
@@ -408,7 +449,9 @@ void FiltersMenu::scrollToButton(not_null<Ui::RpWidget*> widget) {
 	const auto scrollTo = scrollTop + (isBottomEdge ? localBottom : localTop);
 
 	auto scroll = [=] {
-		_scroll.scrollToY(qRound(_scrollToAnimation.value(scrollTo)));
+		const auto animated
+			= int(base::SafeRound(_scrollToAnimation.value(scrollTo)));
+		_scroll.scrollToY(animated);
 	};
 
 	_scrollToAnimation.start(
@@ -467,23 +510,21 @@ void FiltersMenu::moveToFilterEdge(int delta) {
 }
 
 void FiltersMenu::setListTabStop(not_null<Ui::SideBarButton*> stop) {
-	// Single source of truth for the list's roving Tab-stop, wired between the
-	// main menu and the edit button. Promote `stop` to the only TabFocus item
-	// and demote the previous one, so Tab/Shift+Tab always leave the list the
-	// same way regardless of which folder is focused.
+	// Single source of truth for the list's roving Tab-stop: promote `stop`
+	// to the only TabFocus item and demote the previous one, so Tab always
+	// enters the list at the same folder. Its position in the Tab chain
+	// comes from the containers' visual order (see setup()).
 	if (const auto previous = _tabStop.get(); previous && previous != stop) {
 		previous->setFocusPolicy(Qt::ClickFocus);
 	}
 	stop->setFocusPolicy(Qt::TabFocus);
 	_tabStop = stop.get();
-	QWidget::setTabOrder(&_menu, stop.get());
-	const auto favorite = _favorite ? _favorite->entity() : nullptr;
-	if (favorite) {
-		QWidget::setTabOrder(stop.get(), favorite);
-		QWidget::setTabOrder(favorite, _setup.get());
-	} else {
-		QWidget::setTabOrder(stop.get(), _setup.get());
-	}
+
+	// The Tab-stop moved outside of any layout change, so a Tab entering
+	// the sidebar from outside would still walk to the demoted button's
+	// old chain position - rewire the visual order right away.
+	_outer.refreshVisualTabOrder();
+	_container->refreshVisualTabOrder();
 }
 
 bool FiltersMenu::listFocused() const {
@@ -535,17 +576,32 @@ void FiltersMenu::refresh() {
 
 	auto now = base::flat_map<int, base::unique_qptr<Ui::SideBarButton>>();
 	const auto &currentFilter = _session->activeChatsFilterCurrent();
+	using Mode = Ui::ChatsFiltersTabsMode;
+	const auto withIcons = (tabsMode() != Mode::TextOnly);
+	_titleIconsLifetime.destroy();
 	for (const auto &filter : filters->list()) {
 		const auto nextIsLocked = (now.size() >= premiumFrom);
 		if (nextIsLocked && (currentFilter == filter.id())) {
 			_session->setActiveChatsFilter(FilterId(0));
 		}
+		const auto title = filter.title();
+		const auto titleIcon = (withIcons && filter.id())
+			? Ui::ResolveFilterTitleIcon(
+				&_session->session(),
+				filter,
+				title,
+				&_outer,
+				_titleIconsLifetime,
+				[=] { refresh(); })
+			: Ui::FilterTitleIcon();
 		auto button = prepareButton(
 			_list,
 			filter.id(),
-			filter.title(),
+			title,
 			Ui::ComputeFilterIcon(filter),
-			nextIsLocked);
+			nextIsLocked,
+			false,
+			&titleIcon);
 		now.emplace(filter.id(), std::move(button));
 	}
 	_filters = std::move(now);
@@ -698,23 +754,14 @@ const style::SideBarButton &FiltersMenu::buttonStyle() const {
 	return st::windowFiltersButton;
 }
 
-base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareAll() {
-	return prepareButton(
-		_container,
-		0,
-		{},
-		Ui::FilterIcon::All,
-		false,
-		true);
-}
-
 base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareButton(
 		not_null<Ui::VerticalLayout*> container,
 		FilterId id,
 		Data::ChatFilterTitle title,
 		Ui::FilterIcon icon,
 		bool locked,
-		bool toBeginning) {
+		bool toBeginning,
+		const Ui::FilterTitleIcon *titleIcon) {
 	const auto isStatic = title.isStatic;
 	const auto paused = [=] {
 		return On(PowerSaving::kEmojiChat)
@@ -729,7 +776,11 @@ base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareButton(
 	const auto mode = tabsMode();
 	auto prepared = object_ptr<Ui::SideBarButton>(
 		container,
-		id ? title.text : TextWithEntities{ tr::lng_filters_all(tr::now) },
+		!id
+			? tr::marked(tr::lng_filters_all(tr::now))
+			: titleIcon
+			? Ui::FilterTitleWithoutIcon(title.text, *titleIcon)
+			: title.text,
 		buttonStyle(),
 		Core::TextContext({
 			.session = &_session->session(),
@@ -752,6 +803,14 @@ base::unique_qptr<Ui::SideBarButton> FiltersMenu::prepareButton(
 		? icon
 		: Ui::FilterIcon::All);
 	raw->setIconOverride(icons.normal, icons.active);
+	if (titleIcon && titleIcon->document) {
+		raw->setIconPainter(
+			Ui::MakeFilterEmojiIcon(
+				raw,
+				*titleIcon,
+				isStatic,
+				paused));
+	}
 	if (id >= 0) {
 		if (locked) {
 			// Surface a locked folder's premium-gated status and what pressing
@@ -936,8 +995,9 @@ void FiltersMenu::showMenu(QPoint position, FilterId id) {
 		auto filteredChats = [=] {
 			return _session->session().data().chatsFilters().chatsList(id);
 		};
-		Window::MenuAddMarkAsReadChatListAction(
+		MarkAsReadMenu::AddChatListAction(
 			_session,
+			MarkAsReadMenu::ChatListKind::Folder,
 			std::move(filteredChats),
 			addAction);
 
@@ -950,22 +1010,16 @@ void FiltersMenu::showMenu(QPoint position, FilterId id) {
 			.isAttention = true,
 		});
 	} else {
-		auto customUnreadState = [=] {
-			const auto session = &_session->session();
-			return Data::MainListMapUnreadState(
-				session,
-				session->data().chatsList()->unreadState());
-		};
-		Window::MenuAddMarkAsReadChatListAction(
-			_session,
-			[=] { return _session->session().data().chatsList(); },
-			addAction,
-			std::move(customUnreadState));
-
 		addAction(
 			tr::lng_filters_setup_menu(tr::now),
 			crl::guard(&_outer, [=] { openFiltersSettings(); }),
 			&st::menuIconEdit);
+
+		MarkAsReadMenu::AddChatListAction(
+			_session,
+			MarkAsReadMenu::ChatListKind::AllChats,
+			[=] { return _session->session().data().chatsList(); },
+			addAction);
 	}
 	if (_popupMenu->empty()) {
 		_popupMenu = nullptr;

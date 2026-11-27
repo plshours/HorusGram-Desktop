@@ -7,26 +7,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "main/main_account.h"
 
+#include "api/api_updates.h"
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
-#include "storage/storage_account.h"
-#include "storage/storage_domain.h" // Storage::StartResult.
-#include "storage/serialize_common.h"
-#include "storage/serialize_peer.h"
-#include "storage/localstorage.h"
+#include "data/data_changes.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
-#include "data/data_changes.h"
-#include "window/window_controller.h"
+#include "main/main_app_config.h"
+#include "main/main_domain.h"
+#include "main/main_session.h"
+#include "main/main_session_settings.h"
+#include "mainwidget.h"
 #include "media/audio/media_audio.h"
 #include "mtproto/mtproto_config.h"
-#include "mainwidget.h"
-#include "api/api_updates.h"
+#include "storage/localstorage.h"
+#include "storage/serialize_common.h"
+#include "storage/serialize_peer.h"
+#include "storage/storage_account.h"
+#include "storage/storage_domain.h" // Storage::StartResult.
+#include "tgw/tgw_storage.h"
 #include "ui/ui_utility.h"
-#include "main/main_app_config.h"
-#include "main/main_session.h"
-#include "main/main_domain.h"
-#include "main/main_session_settings.h"
+#include "window/window_controller.h"
 
 namespace Main {
 namespace {
@@ -63,7 +64,7 @@ Storage::Domain &Account::domainLocal() const {
 	return _domain->local();
 }
 
-[[nodiscard]] Storage::StartResult Account::legacyStart(
+Storage::StartResult Account::legacyStart(
 		const QByteArray &passcode) {
 	Expects(!_appConfig);
 
@@ -97,7 +98,8 @@ void Account::watchProxyChanges() {
 	Core::App().proxyChanges(
 	) | rpl::on_next([=](const ProxyChange &change) {
 		const auto key = [&](const MTP::ProxyData &proxy) {
-			return (proxy.type == MTP::ProxyData::Type::Mtproto)
+			return (proxy.type == MTP::ProxyData::Type::Mtproto
+				|| proxy.type == MTP::ProxyData::Type::Web)
 				? std::make_pair(proxy.host, proxy.port)
 				: std::make_pair(QString(), uint32(0));
 		};
@@ -208,12 +210,21 @@ void Account::destroySession(DestroyReason reason) {
 		return;
 	}
 
+	// Assigning _sessionValue fires sessionChanges() synchronously, and a
+	// listener may enter a nested event dispatch that drains crl::on_main.
+	// Nothing may delete this Account while we're still on the stack.
+	_destroyingSession = true;
 	_sessionValue = nullptr;
 
 	if (reason == DestroyReason::LoggedOut) {
 		_session->finishLogout();
 	}
 	_session = nullptr;
+	_destroyingSession = false;
+}
+
+bool Account::destroyingSession() const {
+	return _destroyingSession;
 }
 
 bool Account::sessionExists() const {
@@ -536,8 +547,8 @@ bool Account::loggingOut() const {
 
 void Account::forcedLogOut() {
 	if (sessionExists()) {
-		resetAuthorizationKeys();
 		loggedOut();
+		resetAuthorizationKeys();
 	}
 }
 
@@ -545,6 +556,7 @@ void Account::loggedOut() {
 	_loggingOut = false;
 	Media::Player::mixer()->stopAndClear();
 	destroySession(DestroyReason::LoggedOut);
+	Tgw::EraseStorage(this);
 	local().reset();
 	cSetOtherOnline(0);
 }

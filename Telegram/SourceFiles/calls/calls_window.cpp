@@ -8,11 +8,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "calls/calls_window.h"
 
 #include "base/power_save_blocker.h"
-#include "ui/platform/ui_platform_window_title.h"
-#include "ui/widgets/rp_window.h"
 #include "ui/layers/layer_manager.h"
 #include "ui/layers/show.h"
+#include "ui/platform/ui_platform_window_title.h"
+#include "ui/widgets/rp_window.h"
+
 #include "styles/style_calls.h"
+
+#include <QtGui/QWindow>
 
 namespace Calls {
 namespace {
@@ -84,13 +87,13 @@ Show::operator bool() const {
 
 Window::Window()
 : _layerBg(std::make_unique<Ui::LayerManager>(widget()))
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 , _controls(Ui::Platform::SetupSeparateTitleControls(
 	window(),
 	st::callTitle,
 	[=](bool maximized) { _maximizeRequests.fire_copy(maximized); },
 	_controlsTop.value()))
-#endif // !Q_OS_MAC
+#endif // !Q_OS_MACOS
 {
 	_layerBg->setStyleOverrides(&st::groupCallBox, &st::groupCallLayerBox);
 	_layerBg->setHideByBackgroundClick(true);
@@ -111,60 +114,95 @@ not_null<Ui::RpWidget*> Window::widget() const {
 }
 
 void Window::raiseControls() {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	_controls->wrap.raise();
-#endif // !Q_OS_MAC
+#endif // !Q_OS_MACOS
 }
 
 void Window::setControlsStyle(const style::WindowTitle &st) {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	_controls->controls.setStyle(st);
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 }
 
 void Window::setControlsShown(float64 shown) {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	_controlsTop = anim::interpolate(-_controls->wrap.height(), 0, shown);
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 }
 
-int Window::controlsWrapTop() const {
-#ifndef Q_OS_MAC
-	return _controls->wrap.y();
-#else // Q_OS_MAC
-	return 0;
-#endif // Q_OS_MAC
+Ui::RpWidget *Window::controlsWrap() const {
+#ifndef Q_OS_MACOS
+	return &_controls->wrap;
+#else // Q_OS_MACOS
+	return nullptr;
+#endif // Q_OS_MACOS
 }
 
 QRect Window::controlsGeometry() const {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	return _controls->controls.geometry();
-#else // Q_OS_MAC
+#else // Q_OS_MACOS
 	return QRect();
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 }
 
 auto Window::controlsLayoutChanges() const
 -> rpl::producer<Ui::Platform::TitleLayout> {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	return _controls->controls.layout().changes();
-#else // Q_OS_MAC
+#else // Q_OS_MACOS
 	return rpl::never<Ui::Platform::TitleLayout>();
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 }
 
 bool Window::controlsHasHitTest(QPoint widgetPoint) const {
-#ifndef Q_OS_MAC
+#ifndef Q_OS_MACOS
 	using Result = Ui::Platform::HitTestResult;
 	const auto windowPoint = widget()->mapTo(window(), widgetPoint);
 	return (_controls->controls.hitTest(windowPoint) != Result::None);
-#else // Q_OS_MAC
+#else // Q_OS_MACOS
 	return false;
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 }
 
 rpl::producer<bool> Window::maximizeRequests() const {
 	return _maximizeRequests.events();
+}
+
+bool Window::pinnedOnTop() const {
+	const auto handle = window()->windowHandle();
+	return handle && (handle->flags() & Qt::WindowStaysOnTopHint);
+}
+
+void Window::setPinnedOnTop(bool pinned) {
+	if (const auto handle = window()->windowHandle()) {
+		handle->setFlag(Qt::WindowStaysOnTopHint, pinned);
+	}
+}
+
+bool Window::unpinFromTopMaximized() {
+#ifdef Q_OS_WIN
+	// Changing the flag recreates the window, so while it is maximized
+	// only the z-order is dropped and the flag is reset on restoring.
+	if (const auto handle = window()->windowHandle()) {
+		SetWindowPos(
+			reinterpret_cast<HWND>(handle->winId()),
+			HWND_NOTOPMOST,
+			0,
+			0,
+			0,
+			0,
+			(SWP_NOMOVE
+				| SWP_NOSIZE
+				| SWP_NOOWNERZORDER
+				| SWP_FRAMECHANGED
+				| SWP_NOACTIVATE));
+	}
+	return true;
+#else // Q_OS_WIN
+	return false;
+#endif // Q_OS_WIN
 }
 
 base::weak_ptr<Ui::Toast::Instance> Window::showToast(

@@ -7,26 +7,27 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "dialogs/dialogs_entry.h"
 
-#include "dialogs/dialogs_key.h"
-#include "dialogs/dialogs_indexed_list.h"
 #include "base/options.h"
 #include "base/unixtime.h"
-#include "data/data_changes.h"
-#include "data/data_session.h"
-#include "data/data_folder.h"
-#include "data/data_forum_topic.h"
-#include "data/data_chat_filters.h"
-#include "data/data_saved_sublist.h"
 #include "core/application.h"
 #include "core/core_settings.h"
-#include "mainwidget.h"
+#include "data/data_changes.h"
+#include "data/data_chat_filters.h"
+#include "data/data_folder.h"
+#include "data/data_forum_topic.h"
+#include "data/data_saved_sublist.h"
+#include "data/data_session.h"
+#include "dialogs/dialogs_indexed_list.h"
+#include "dialogs/dialogs_key.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "mainwidget.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_options.h"
 #include "ui/ui_utility.h"
-#include "history/history.h"
-#include "history/history_item.h"
+
 #include "styles/style_dialogs.h" // st::dialogsTextWidthMin
 
 namespace Dialogs {
@@ -59,10 +60,6 @@ base::options::toggle OptionUnreadOnTop({
 	.description = "Sort chats with new unmuted messages right below the "
 		"pinned ones and keep them there until you read them.",
 });
-
-[[nodiscard]] bool UnreadOnTopEnabled() {
-	return OptionUnreadOnTop.value();
-}
 
 } // namespace
 
@@ -221,7 +218,11 @@ void Entry::updateChatListSortPosition() {
 		updateChatListEntry();
 		return;
 	}
-	_sortKeyByDate = DialogPosFromDate(adjustedChatListTimeId());
+	const auto sortKeyByDate = DialogPosFromDate(adjustedChatListTimeId());
+	_sortKeyByDate = (owner().dialogsUnreadOnTop()
+		&& hasUnreadUnmutedForSort())
+		? UnreadOnTopDialogPos(sortKeyByDate)
+		: sortKeyByDate;
 	const auto fixedIndex = fixedOnTopIndex();
 	_sortKeyInChatList = fixedIndex
 		? FixedOnTopDialogPos(fixedIndex)
@@ -247,12 +248,7 @@ int Entry::lookupPinnedIndex(FilterId filterId) const {
 
 uint64 Entry::computeSortPosition(FilterId filterId) const {
 	const auto index = lookupPinnedIndex(filterId);
-	if (index) {
-		return PinnedDialogPos(index);
-	} else if (UnreadOnTopEnabled() && hasUnreadUnmutedForSort()) {
-		return UnreadOnTopDialogPos(_sortKeyByDate);
-	}
-	return _sortKeyByDate;
+	return index ? PinnedDialogPos(index) : _sortKeyByDate;
 }
 
 bool Entry::hasUnreadUnmutedForSort() const {
@@ -327,7 +323,7 @@ void Entry::notifyUnreadStateChange(const UnreadState &wasState) {
 			sublist,
 			Data::SublistUpdate::Flag::UnreadView);
 	}
-	if (UnreadOnTopEnabled()) {
+	if (owner().dialogsUnreadOnTop()) {
 		updateChatListSortPosition();
 	}
 	updateChatListEntryPostponed();
@@ -398,12 +394,6 @@ const RowsByLetter *Entry::chatListLinks(FilterId filterId) const {
 	return (i != end(_chatListLinks)) ? &i->second : nullptr;
 }
 
-not_null<Row*> Entry::mainChatListLink(FilterId filterId) const {
-	const auto links = chatListLinks(filterId);
-	Assert(links != nullptr);
-	return links->main;
-}
-
 Row *Entry::maybeMainChatListLink(FilterId filterId) const {
 	const auto links = chatListLinks(filterId);
 	return links ? links->main.get() : nullptr;
@@ -431,10 +421,6 @@ void Entry::setChatListTimeId(TimeId date) {
 			history->communityChatsListDateChanged(was);
 		}
 	}
-}
-
-int Entry::posInChatList(FilterId filterId) const {
-	return mainChatListLink(filterId)->index();
 }
 
 void Entry::setColorIndexForFilterId(

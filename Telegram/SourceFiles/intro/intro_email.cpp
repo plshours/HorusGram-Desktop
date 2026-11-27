@@ -13,15 +13,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lottie/lottie_icon.h"
 #include "settings/cloud_password/settings_cloud_password_common.h"
 #include "settings/settings_common.h" // CreateLottieIcon.
-#include "ui/rect.h"
-#include "ui/vertical_list.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/rect.h"
+#include "ui/vertical_list.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "window/window_session_controller.h"
 #include "hoursgram/customization/intro_look.h"
+
 #include "styles/style_intro.h"
 #include "styles/style_settings.h"
 
@@ -74,6 +75,9 @@ EmailWidget::EmailWidget(
 		content,
 		tr::lng_settings_cloud_login_email_placeholder(),
 		QString());
+	newInput->setInputMethodHints(Qt::ImhEmailCharactersOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 	Ui::AddSkip(content);
 	const auto error = Settings::CloudPassword::AddError(content, nullptr);
 	newInput->changes() | rpl::on_next([=] {

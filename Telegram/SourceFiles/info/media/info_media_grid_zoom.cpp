@@ -7,11 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/media/info_media_grid_zoom.h"
 
-#include "info/media/info_media_list_widget.h"
-#include "info/media/info_media_list_section.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "info/media/info_media_list_section.h"
+#include "info/media/info_media_list_widget.h"
 #include "ui/ui_utility.h"
+
 #include "styles/style_info.h"
 #include "styles/style_overview.h"
 
@@ -207,8 +208,8 @@ bool ListZoom::processWheel(not_null<QWheelEvent*> e) {
 	}
 	const auto position = e->position();
 	const auto anchor = QPoint(
-		qRound(position.x()),
-		_list->_visibleTop + qRound(position.y()));
+		int(base::SafeRound(position.x())),
+		_list->_visibleTop + int(base::SafeRound(position.y())));
 	zoomBy((delta > 0) ? 1 : -1, anchor);
 	return true;
 }

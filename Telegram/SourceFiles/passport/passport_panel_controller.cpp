@@ -7,25 +7,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "passport/passport_panel_controller.h"
 
-#include "main/main_account.h"
-#include "main/main_session.h"
-#include "lang/lang_keys.h"
-#include "passport/passport_panel_edit_document.h"
-#include "passport/passport_panel_edit_contact.h"
-#include "passport/passport_panel_edit_scans.h"
-#include "passport/passport_panel.h"
-#include "passport/ui/passport_details_row.h"
 #include "base/unixtime.h"
 #include "boxes/passcode_box.h"
-#include "ui/boxes/confirm_box.h"
-#include "window/window_session_controller.h"
-#include "ui/toast/toast.h"
-#include "ui/rp_widget.h"
-#include "ui/countryinput.h"
-#include "ui/text/format_values.h"
-#include "ui/widgets/sent_code_field.h"
 #include "core/update_checker.h"
 #include "countries/countries_instance.h"
+#include "lang/lang_keys.h"
+#include "main/main_account.h"
+#include "main/main_session.h"
+#include "passport/ui/passport_details_row.h"
+#include "passport/passport_panel.h"
+#include "passport/passport_panel_edit_contact.h"
+#include "passport/passport_panel_edit_document.h"
+#include "passport/passport_panel_edit_scans.h"
+#include "ui/boxes/confirm_box.h"
+#include "ui/text/format_values.h"
+#include "ui/toast/toast.h"
+#include "ui/widgets/sent_code_field.h"
+#include "ui/countryinput.h"
+#include "ui/rp_widget.h"
+#include "window/window_session_controller.h"
+
 #include "styles/style_layers.h"
 
 namespace Passport {
@@ -502,6 +503,9 @@ EditContactScheme GetContactScheme(Scope::Type type) {
 		result.newHeader = tr::lng_passport_new_email(tr::now);
 		result.newPlaceholder = tr::lng_passport_email_title();
 		result.aboutNew = tr::lng_passport_new_email_code(tr::now);
+		result.inputHints = Qt::ImhEmailCharactersOnly
+			| Qt::ImhNoAutoUppercase
+			| Qt::ImhNoPredictiveText;
 		result.validate = [](const QString &value) {
 			const auto at = value.indexOf('@');
 			const auto dot = value.lastIndexOf('.');
@@ -532,15 +536,6 @@ const std::map<QString, QString> &NativeToLatinMap() {
 		{ "middle_name_native"_q, "middle_name"_q },
 	};
 	return result;
-}
-
-QString AdjustKeyName(not_null<const Value*> value, const QString &key) {
-	if (!value->nativeNames) {
-		return key;
-	}
-	const auto &map = LatinToNativeMap();
-	const auto i = map.find(key);
-	return (i == end(map)) ? key : i->second;
 }
 
 bool SkipFieldCheck(not_null<const Value*> value, const QString &key) {

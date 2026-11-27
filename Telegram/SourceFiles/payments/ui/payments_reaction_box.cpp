@@ -12,20 +12,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/boxes/boost_box.h" // MakeBoostFeaturesBadge.
 #include "ui/controls/who_reacted_context_action.h"
-#include "ui/effects/premium_bubble.h"
 #include "ui/effects/ministar_particles.h"
+#include "ui/effects/premium_bubble.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/continuous_sliders.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/color_int_conversion.h"
 #include "ui/dynamic_image.h"
 #include "ui/painter.h"
 #include "ui/vertical_list.h"
+
 #include "styles/style_calls.h"
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
@@ -209,7 +210,8 @@ void SelectShownPeer(
 		not_null<Ui::WhoReactedEntryAction*> action;
 		std::shared_ptr<Ui::DynamicImage> userpic;
 	};
-	auto actions = std::make_shared<std::vector<Entry>>();
+	const auto actions = (*menu)->lifetime().make_state<
+		std::vector<Entry>>();
 	actions->reserve(mine.size());
 	for (const auto &entry : mine) {
 		auto action = base::make_unique_q<WhoReactedEntryAction>(

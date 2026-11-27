@@ -24,29 +24,30 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "data/data_web_page.h"
-#include "history/history.h"
-#include "history/history_item.h"
-#include "history/view/history_view_element.h"
 #include "history/view/media/history_view_location.h"
 #include "history/view/media/history_view_media_grouped.h"
 #include "history/view/media/history_view_photo.h"
+#include "history/view/history_view_element.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "info/profile/info_profile_values.h"
-#include "iv/iv_rich_page.h"
 #include "iv/markdown/iv_markdown_common.h"
 #include "iv/markdown/iv_markdown_history_view_media.h"
 #include "iv/markdown/iv_markdown_prepare.h"
+#include "iv/iv_rich_page.h"
+#include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "media/view/media_view_open_common.h"
 #include "storage/file_download.h"
-#include "ui/dynamic_image.h"
+#include "styles/palette.h"
 #include "ui/image/image.h"
-#include "ui/painter.h"
 #include "ui/text/text_entity.h"
+#include "ui/dynamic_image.h"
+#include "ui/painter.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 
-#include "styles/palette.h"
 #include "styles/style_chat.h"
 
 #include <QtGui/QImage>
@@ -364,19 +365,6 @@ void CachedPagePhotoRuntime::releaseHeavyData() {
 	};
 }
 
-[[nodiscard]] ::Data::LocationPoint CachedPageMapPoint(
-		double latitude,
-		double longitude,
-		uint64 accessHash) {
-	const auto point = MTP_geoPoint(
-		MTP_flags(0),
-		MTP_double(longitude),
-		MTP_double(latitude),
-		MTP_long(accessHash),
-		MTP_int(0));
-	return ::Data::LocationPoint(point.c_geoPoint());
-}
-
 [[nodiscard]] bool CanHostNativeIvVideoDocument(
 		not_null<DocumentData*> document) {
 	return !document->isVideoMessage()
@@ -393,11 +381,6 @@ void CachedPagePhotoRuntime::releaseHeavyData() {
 		.skipPremiumEffect = !session->premium(),
 		.spoiler = spoiler,
 	};
-}
-
-[[nodiscard]] bool CanHostNativeIvAudioDocument(
-		not_null<DocumentData*> document) {
-	return document->isAudioFile() || document->isVoiceMessage();
 }
 
 [[nodiscard]] QString CachedPageGroupedMediaCopyText(
@@ -419,33 +402,38 @@ void CachedPagePhotoRuntime::releaseHeavyData() {
 	return QString();
 }
 
-[[nodiscard]] QString CachedPageAudioTitleText(
-		const Markdown::PreparedAudioBlockData &audio) {
-	if (!audio.title.isEmpty()) {
-		return audio.title;
+[[nodiscard]] QString CachedPageDocumentTitleText(
+		const Markdown::PreparedDocumentBlockData &document,
+		bool audio) {
+	if (audio && !document.title.isEmpty()) {
+		return document.title;
+	} else if (!document.fileName.isEmpty()) {
+		return document.fileName;
 	}
-	if (!audio.fileName.isEmpty()) {
-		return audio.fileName;
-	}
-	return tr::lng_in_dlg_audio_file(tr::now);
+	return audio
+		? tr::lng_in_dlg_audio_file(tr::now)
+		: tr::lng_in_dlg_file(tr::now);
 }
 
-[[nodiscard]] QString CachedPageAudioSubtitleText(
-		const Markdown::PreparedAudioBlockData &audio) {
-	if (!audio.performer.isEmpty()) {
-		return audio.performer;
+[[nodiscard]] QString CachedPageDocumentSubtitleText(
+		const Markdown::PreparedDocumentBlockData &document,
+		bool audio) {
+	if (!audio) {
+		return QString();
+	} else if (!document.performer.isEmpty()) {
+		return document.performer;
 	}
-	if (!audio.fileName.isEmpty()
-		&& audio.fileName != CachedPageAudioTitleText(audio)) {
-		return audio.fileName;
-	}
-	return QString();
+	const auto title = CachedPageDocumentTitleText(document, audio);
+	return (!document.fileName.isEmpty() && document.fileName != title)
+		? document.fileName
+		: QString();
 }
 
-[[nodiscard]] QString CachedPageAudioCopyText(
-		const Markdown::PreparedAudioBlockData &audio) {
-	const auto title = CachedPageAudioTitleText(audio);
-	const auto subtitle = CachedPageAudioSubtitleText(audio);
+[[nodiscard]] QString CachedPageDocumentCopyText(
+		const Markdown::PreparedDocumentBlockData &document,
+		bool audio) {
+	const auto title = CachedPageDocumentTitleText(document, audio);
+	const auto subtitle = CachedPageDocumentSubtitleText(document, audio);
 	return subtitle.isEmpty() ? title : (title + u"\n"_q + subtitle);
 }
 
@@ -635,7 +623,8 @@ void CachedPageInlineDocumentImage::subscribeToUpdates(Fn<void()> callback) {
 	) | rpl::filter([=] {
 		return fullImageLoaded()
 			|| (!_photoMedia
-				&& !_document->isImage()
+				&& (!_document->isImage()
+					|| _document->size > Storage::kMaxFileInMemory)
 				&& resolvedThumbnailImage());
 	}) | rpl::take(1) | rpl::on_next(std::move(callback), _subscription);
 }
@@ -644,7 +633,8 @@ void CachedPageInlineDocumentImage::ensureWanted() {
 	if (_photoMedia) {
 		_photoMedia->wanted(::Data::PhotoSize::Large, _origin);
 	}
-	if (_document->isImage()) {
+	if (_document->isImage()
+		&& _document->size <= Storage::kMaxFileInMemory) {
 		_document->forceToCache(true);
 		_document->save(_origin, QString(), LoadFromCloudOrLocal, true);
 	} else {
@@ -690,7 +680,7 @@ QImage CachedPageInlineDocumentImage::resolvedDocumentImage() {
 	}
 	_documentImageRead = true;
 	_document->saveFromDataSilent();
-	auto &location = _document->location(true);
+	const auto &location = _document->location(true);
 	if (location.accessEnable()) {
 		_documentImage = Images::Read({
 			.path = location.name(),
@@ -1416,11 +1406,10 @@ auto CachedPageMediaRuntime::hostedMediaBlockFactory() const
 		},
 		[session = _session, host, origin = fileOrigin()](
 				Window::SessionController *controller,
-				const Markdown::PreparedAudioBlockData &prepared) {
+				const Markdown::PreparedDocumentBlockData &prepared) {
 			const auto document = session->data().document(
 				DocumentId(prepared.documentId));
-			if (document->isNull()
-				|| !CanHostNativeIvAudioDocument(document)) {
+			if (document->isNull()) {
 				return std::shared_ptr<Markdown::MediaBlock>();
 			}
 			host->registerDocument(document);
@@ -1429,10 +1418,11 @@ auto CachedPageMediaRuntime::hostedMediaBlockFactory() const
 				document,
 				::Data::MediaFile::Args{});
 
+			const auto audio = Iv::RichDocumentIsAudio(document);
 			auto descriptor = Markdown::IvHistoryViewMediaDescriptor();
 			descriptor.stableId = prepared.id.value;
-			descriptor.kind = Markdown::IvHistoryViewMediaKind::Audio;
-			descriptor.copyText = CachedPageAudioCopyText(prepared);
+			descriptor.kind = Markdown::IvHistoryViewMediaKind::DocumentRow;
+			descriptor.copyText = CachedPageDocumentCopyText(prepared, audio);
 			descriptor.host = host;
 			descriptor.mediaFactory = [media](
 					not_null<HistoryView::Element*> view) {
@@ -1452,17 +1442,20 @@ auto CachedPageMediaRuntime::hostedMediaBlockFactory() const
 		[session = _session, host](
 				Window::SessionController *controller,
 				const Markdown::PreparedMapBlockData &prepared) {
-			const auto mapSize = QSize(prepared.width, prepared.height);
-			const auto point = CachedPageMapPoint(
+			const auto point = ::Data::LocationPoint::FromCoordinates(
 				prepared.latitude,
 				prepared.longitude,
 				prepared.accessHash);
+			if (!point) {
+				return std::shared_ptr<Markdown::MediaBlock>();
+			}
+			const auto mapSize = QSize(prepared.width, prepared.height);
 			const auto mapImage = std::make_shared<::Data::CloudImage>(
 				session,
 				CachedPageMapImageData(
-					prepared.latitude,
-					prepared.longitude,
-					prepared.accessHash,
+					point->lat(),
+					point->lon(),
+					point->accessHash(),
 					mapSize,
 					prepared.zoom));
 			const auto mapImagePtr = mapImage.get();
@@ -1473,7 +1466,7 @@ auto CachedPageMediaRuntime::hostedMediaBlockFactory() const
 			descriptor.copyText = tr::lng_maps_point(tr::now);
 			descriptor.layoutHint = mapSize;
 			descriptor.host = host;
-			descriptor.mediaFactory = [mapImagePtr, point, mapSize](
+			descriptor.mediaFactory = [mapImagePtr, point = *point, mapSize](
 					not_null<HistoryView::Element*> view) {
 				return std::make_unique<HistoryView::Location>(
 					view,
@@ -1524,7 +1517,9 @@ auto CachedPageMediaRuntime::hostedMediaBlockFactory() const
 					medias->push_back(std::make_unique<::Data::MediaPhoto>(
 						host->item(),
 						photo,
-						item.media.spoiler));
+						::Data::MediaPhoto::Args{
+							.spoiler = item.media.spoiler,
+						}));
 					auto runtime = std::make_shared<CachedPagePhotoRuntime>(
 						session,
 						photo,

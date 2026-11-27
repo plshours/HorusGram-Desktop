@@ -10,21 +10,23 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "core/application.h"
 #include "core/file_utilities.h"
+#include "core/update_channel.h"
 #include "core/update_checker.h"
 #include "core/version.h"
 #include "lang/lang_keys.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/text/text_utilities.h"
-#include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/wrap/vertical_layout.h"
-#include "styles/style_layers.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
+#include "ui/vertical_list.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_channel_earn.h"
 #include "styles/style_chat.h"
 #include "styles/style_dialogs.h"
+#include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
 #include "styles/style_premium.h"
 #include "styles/style_settings.h"
@@ -44,11 +46,11 @@ rpl::producer<TextWithEntities> Text() {
 		lt_gpl_link,
 		rpl::single(Ui::Text::Link(
 			"GNU GPL",
-			"https://github.com/plshours/HoursGram-Desktop/blob/main/LICENSE")),
+			"https://github.com/plshours/HorusGram-Desktop/blob/main/LICENSE")),
 		lt_github_link,
 		rpl::single(Ui::Text::Link(
 			"GitHub",
-			"https://github.com/plshours/HoursGram-Desktop")),
+			"https://github.com/plshours/HorusGram-Desktop")),
 		tr::marked);
 }
 
@@ -63,7 +65,7 @@ rpl::producer<TextWithEntities> Text() {
 	result.append(u". Licensed under GPLv3, see "_q);
 	result.append(Ui::Text::Link(
 		u"NOTICE"_q,
-		u"https://github.com/plshours/HoursGram-Desktop/blob/main/NOTICE.md"_q));
+		u"https://github.com/plshours/HorusGram-Desktop/blob/main/NOTICE.md"_q));
 	result.append(u"."_q);
 	return result;
 }
@@ -109,9 +111,13 @@ void AboutBox(not_null<Ui::GenericBox*> box, Window::SessionController*) {
 	box->setWidth(st::aboutWidth);
 }
 
-QString currentVersionText() {
+namespace {
+
+[[nodiscard]] QString CurrentVersionText(bool withCommit) {
 	auto result = QString::fromLatin1(AppVersionStr);
-	if (cAlphaVersion()) {
+	if (Core::BuildIsCanary) {
+		result += Core::CanaryVersionSuffix();
+	} else if (cAlphaVersion()) {
 		result += u" alpha %1"_q.arg(cAlphaVersion() % 1000);
 	} else if (AppBetaVersion) {
 		result += " beta";
@@ -124,7 +130,22 @@ QString currentVersionText() {
 #ifdef _DEBUG
 	result += " DEBUG";
 #endif
+	if (withCommit
+		&& Core::BuildIsCanary
+		&& Core::CanaryCommitHash[0] != '\0') {
+		result += u" \u00B7 "_q + QLatin1String(Core::CanaryCommitHash);
+	}
 	return result;
+}
+
+} // namespace
+
+QString currentVersionText() {
+	return CurrentVersionText(true);
+}
+
+QString currentVersionShortText() {
+	return CurrentVersionText(false);
 }
 
 void ArchiveHintBox(

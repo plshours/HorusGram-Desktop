@@ -8,14 +8,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "dialogs/ui/dialogs_video_userpic.h"
 
 #include "core/file_location.h"
+#include "data/data_file_origin.h"
 #include "data/data_peer.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
-#include "data/data_file_origin.h"
 #include "data/data_session.h"
-#include "dialogs/dialogs_entry.h"
 #include "dialogs/ui/dialogs_layout.h"
+#include "dialogs/dialogs_entry.h"
 #include "ui/painter.h"
+
 #include "styles/style_dialogs.h"
 
 namespace Dialogs::Ui {
@@ -56,7 +57,7 @@ void VideoUserpic::paintLeft(
 				_peer->userpicPhotoOrigin());
 		}
 	}
-	if (!_video) {
+	if (!_video && !_video.isBad()) {
 		if (!_videoPhotoMedia) {
 			const auto photo = _peer->owner().photo(photoId);
 			if (!photo->isNull()) {
@@ -123,7 +124,7 @@ void VideoUserpic::clipCallback(Media::Clip::Notification notification) {
 	case Notification::Reinit: {
 		if (_video->state() == State::Error) {
 			_video.setBad();
-		} else if (startReady()) {
+		} else if (!startReady()) {
 			_repaint();
 		}
 	} break;

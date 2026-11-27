@@ -14,12 +14,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/cloud_password/settings_cloud_password_email_confirm.h"
 #include "settings/cloud_password/settings_cloud_password_manage.h"
 #include "settings/cloud_password/settings_cloud_password_step.h"
-#include "ui/vertical_list.h"
 #include "ui/boxes/confirm_box.h"
-#include "ui/widgets/buttons.h"
 #include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/buttons.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/vertical_list.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
@@ -88,6 +89,9 @@ void Email::setupContent() {
 		content,
 		tr::lng_cloud_password_email(),
 		currentStepDataEmail);
+	newInput->setInputMethodHints(Qt::ImhEmailCharactersOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 	const auto error = AddError(content, nullptr);
 	newInput->changes(
 	) | rpl::on_next([=] {
@@ -96,11 +100,9 @@ void Email::setupContent() {
 	AddSkipInsteadOfField(content);
 
 	const auto send = [=](Fn<void()> close) {
-		// HorusGram: idk weird crash
 		if (_requestLifetime) {
-			_requestLifetime.destroy();
+			return;
 		}
-		// Expects(!_requestLifetime);
 
 		const auto data = stepData();
 

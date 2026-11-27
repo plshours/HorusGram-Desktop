@@ -7,14 +7,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/media/history_view_file.h"
 
-#include "lang/lang_keys.h"
-#include "ui/text/format_values.h"
-#include "history/history_item.h"
-#include "history/history.h"
-#include "history/view/history_view_element.h"
 #include "data/data_document.h"
 #include "data/data_file_click_handler.h"
 #include "data/data_session.h"
+#include "history/view/media/history_view_media_common.h"
+#include "history/view/history_view_element.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "lang/lang_keys.h"
+#include "ui/text/format_values.h"
+#include "ui/rect.h"
+
 #include "styles/style_chat.h"
 
 namespace HistoryView {
@@ -97,6 +100,42 @@ void File::radialAnimationCallback(crl::time now) const {
 	}
 	if (!_animation->radial.animating()) {
 		checkAnimationFinished();
+	}
+}
+
+void File::paintTtlFire(QPainter &p, QRect inner) const {
+	if (const auto state = _parent->Get<TtlPaintState>()) {
+		Ui::PaintTtlFireIcon(p, inner, state->fireCache);
+	}
+}
+
+void File::paintTtlCountdown(
+		QPainter &p,
+		QRect inner,
+		int line,
+		const style::color &color,
+		bool paused) const {
+	const auto state = _parent->Get<TtlPaintState>();
+	if (!state) {
+		return;
+	}
+	if (state->countdown
+		&& state->countdown->destroyAt != _realParent->mediaDestroyAt()) {
+		state->countdown = nullptr;
+	}
+	if (!state->countdown) {
+		state->countdown = MakeTtlCountdown(
+			_realParent,
+			[parent = _parent] { parent->repaint(); });
+	}
+	if (state->countdown) {
+		Ui::PaintTtlCountdown(
+			p,
+			inner - Margins(line),
+			line,
+			state->countdown.get(),
+			color,
+			paused);
 	}
 }
 

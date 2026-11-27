@@ -77,8 +77,7 @@ void ResolvingConnection::setChild(ConnectionPointer &&child) {
 			_address,
 			_port,
 			_protocolSecret,
-			_protocolDcId,
-			_protocolForFiles);
+			_protocolDcId);
 		CONNECTION_LOG_INFO("Resolving connected a new child: "
 			+ _child->debugId());
 	}
@@ -185,7 +184,8 @@ crl::time ResolvingConnection::pingTime() const {
 }
 
 crl::time ResolvingConnection::fullConnectTimeout() const {
-	return kOneConnectionTimeout * qMax(int(_proxy.resolvedIPs.size()), 1);
+	return kOneConnectionTimeout
+		* std::max(int(_proxy.resolvedIPs.size()), 1);
 }
 
 void ResolvingConnection::sendData(mtpBuffer &&buffer) {
@@ -209,8 +209,7 @@ void ResolvingConnection::connectToServer(
 		const QString &address,
 		int port,
 		const bytes::vector &protocolSecret,
-		int16 protocolDcId,
-		bool protocolForFiles) {
+		int16 protocolDcId) {
 	if (!_child) {
 		InvokeQueued(this, [=] { emitError(kErrorCodeOther); });
 		return;
@@ -219,13 +218,11 @@ void ResolvingConnection::connectToServer(
 	_port = port;
 	_protocolSecret = protocolSecret;
 	_protocolDcId = protocolDcId;
-	_protocolForFiles = protocolForFiles;
 	_child->connectToServer(
 		address,
 		port,
 		protocolSecret,
-		protocolDcId,
-		protocolForFiles);
+		protocolDcId);
 	CONNECTION_LOG_INFO("Resolving connected a child: " + _child->debugId());
 }
 

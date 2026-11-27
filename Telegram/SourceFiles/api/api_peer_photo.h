@@ -21,12 +21,17 @@ namespace Main {
 class Session;
 } // namespace Main
 
+namespace Media::Encode {
+struct VideoSource;
+} // namespace Media::Encode
+
 namespace Api {
 
 class PeerPhoto final {
 public:
 	using UserPhotoId = PhotoId;
 	explicit PeerPhoto(not_null<ApiWrap*> api);
+	~PeerPhoto();
 
 	enum class EmojiListType {
 		Profile,
@@ -39,6 +44,7 @@ public:
 		QImage image;
 		DocumentId markupDocumentId = 0;
 		std::vector<QColor> markupColors;
+		std::shared_ptr<Media::Encode::VideoSource> video;
 	};
 
 	struct UploadProgress {
@@ -103,15 +109,31 @@ private:
 		mtpRequestId requestId = 0;
 	};
 
-	void ready(
-		const FullMsgId &msgId,
-		std::optional<MTPInputFile> file,
-		std::optional<MTPVideoSize> videoSize);
+	struct PreparedVideo {
+		QByteArray content;
+		QImage cover;
+		crl::time coverOffset = 0;
+	};
+	struct ReadyFiles {
+		std::optional<MTPInputFile> file;
+		std::optional<MTPVideoSize> videoSize;
+		std::optional<MTPInputFile> video;
+		float64 videoStartTs = 0.;
+	};
+	void ready(FullMsgId msgId, ReadyFiles &&files);
 	void upload(
 		not_null<PeerData*> peer,
 		UserPhoto &&photo,
 		UploadType type,
 		Fn<void()> done);
+	void uploadWithVideo(
+		not_null<PeerData*> peer,
+		UserPhoto &&photo,
+		UploadType type,
+		Fn<void()> done);
+	void videoPrepared(FullMsgId msgId, PreparedVideo &&video);
+	void checkVideoUploadDone(FullMsgId msgId);
+	void clearUpload(FullMsgId msgId);
 
 	[[nodiscard]] EmojiListData &emojiList(EmojiListType type);
 	[[nodiscard]] const EmojiListData &emojiList(EmojiListType type) const;
@@ -124,9 +146,19 @@ private:
 		UploadType type = UploadType::Default;
 		Fn<void()> done;
 		PhotoId photoId = 0;
+
+		FullMsgId videoId;
+		float64 videoStartTs = 0.;
+		std::optional<MTPInputFile> photoFile;
+		std::optional<MTPInputFile> videoFile;
+		std::shared_ptr<std::atomic<bool>> cancelTranscode;
+		bool transcoding = false;
+		bool waitingPhoto = false;
+		bool waitingVideo = false;
 	};
 
 	base::flat_map<FullMsgId, UploadValue> _uploads;
+	base::flat_map<FullMsgId, FullMsgId> _videoToPhotoId;
 	rpl::event_stream<UploadProgress> _uploadProgress;
 	rpl::event_stream<not_null<PeerData*>> _uploadDone;
 	rpl::event_stream<not_null<PeerData*>> _uploadFailed;

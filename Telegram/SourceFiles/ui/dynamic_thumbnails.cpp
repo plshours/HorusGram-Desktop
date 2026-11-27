@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/dynamic_thumbnails.h"
 
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_changes.h"
 #include "data/data_cloud_file.h"
 #include "data/data_document.h"
@@ -16,16 +17,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_session.h"
-#include "data/stickers/data_custom_emoji.h"
 #include "data/data_story.h"
 #include "layout/layout_document_generic_preview.h"
 #include "main/main_session.h"
-#include "ui/empty_userpic.h"
-#include "ui/dynamic_image.h"
 #include "ui/image/image_prepare.h"
-#include "ui/painter.h"
 #include "ui/text/text_custom_emoji.h"
+#include "ui/dynamic_image.h"
+#include "ui/empty_userpic.h"
+#include "ui/painter.h"
 #include "ui/userpic_view.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_overview.h"
 
@@ -1120,11 +1121,12 @@ std::shared_ptr<DynamicImage> MakeEmojiThumbnail(
 
 std::shared_ptr<DynamicImage> MakePhotoThumbnail(
 		not_null<PhotoData*> photo,
-		FullMsgId fullId) {
+		FullMsgId fullId,
+		bool forceRound) {
 	return std::make_shared<PhotoThumbnail>(
 		photo,
 		fullId,
-		false,
+		forceRound,
 		MediaThumbnailMode::Crop);
 }
 
@@ -1140,11 +1142,12 @@ std::shared_ptr<DynamicImage> MakePhotoThumbnailCenterCrop(
 
 std::shared_ptr<DynamicImage> MakeDocumentThumbnail(
 		not_null<DocumentData*> document,
-		FullMsgId fullId) {
+		FullMsgId fullId,
+		bool forceRound) {
 	return std::make_shared<VideoThumbnail>(
 		document,
 		fullId,
-		false,
+		forceRound,
 		MediaThumbnailMode::Crop);
 }
 
@@ -1184,17 +1187,6 @@ std::shared_ptr<DynamicImage> MakeDocumentFilePreviewThumbnail(
 	return std::make_shared<DocumentFilePreviewThumbnail>(
 		document,
 		fullId);
-}
-
-std::shared_ptr<DynamicImage> MakeGeoThumbnail(
-		not_null<Data::CloudImage*> data,
-		not_null<Main::Session*> session,
-		Data::FileOrigin origin) {
-	return std::make_shared<GeoThumbnail>(
-		data,
-		session,
-		std::move(origin),
-		false);
 }
 
 std::shared_ptr<DynamicImage> MakeGeoThumbnailWithPin(

@@ -9,23 +9,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_lottie.h"
-#include "data/data_document_media.h"
-#include "data/data_document.h"
-#include "data/data_photo_media.h"
-#include "data/data_photo.h"
-#include "data/data_session.h"
 #include "data/stickers/data_stickers.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_photo.h"
+#include "data/data_photo_media.h"
+#include "data/data_session.h"
 #include "history/view/media/history_view_sticker.h"
 #include "lottie/lottie_single_player.h"
 #include "main/main_session.h"
-#include "ui/emoji_config.h"
 #include "ui/image/image.h"
+#include "ui/emoji_config.h"
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
 #include "window/window_session_controller.h"
-#include "styles/style_chat_helpers.h"
+
 #include "styles/style_chat.h"
+#include "styles/style_chat_helpers.h"
 
 namespace Window {
 namespace {
@@ -127,10 +128,11 @@ void MediaPreviewWidget::paintEvent(QPaintEvent *e) {
 //			+ ((1. - st::stickerPreviewMin) * shown)) / 2.) * 2
 //			+ int(h % 2), 1);
 	}
-	if (_backgroundMargins.isNull()) {
-		p.fillRect(r, st::stickerPreviewBg);
-	} else {
-		p.fillRect(rect() - _backgroundMargins, st::stickerPreviewBg);
+	if (_paintBackground) {
+		const auto bg = _backgroundMargins.isNull()
+			? r
+			: (rect() - _backgroundMargins);
+		p.fillRect(bg, st::stickerPreviewBg);
 	}
 	if (!_customPadding.isNull()) {
 		p.translate(0, _customPadding.top());
@@ -147,7 +149,7 @@ void MediaPreviewWidget::paintEvent(QPaintEvent *e) {
 			effectImage);
 	}
 	if (!_emojiList.empty()) {
-		const auto emojiCount = _emojiList.size();
+		const auto emojiCount = int(_emojiList.size());
 		const auto emojiWidth = (emojiCount * _emojiSize)
 			+ (emojiCount - 1) * st::stickerEmojiSkip;
 		auto emojiLeft = (width() - emojiWidth) / 2;
@@ -314,6 +316,17 @@ void MediaPreviewWidget::setCustomRadius(int radius) {
 	update();
 }
 
+void MediaPreviewWidget::setMaxContentSize(int size) {
+	_maxContentSize = size;
+	_cachedSize = QSize();
+	update();
+}
+
+void MediaPreviewWidget::setPaintBackground(bool paint) {
+	_paintBackground = paint;
+	update();
+}
+
 void MediaPreviewWidget::setCustomDuration(crl::time duration) {
 	_customDuration = duration;
 }
@@ -362,13 +375,16 @@ QSize MediaPreviewWidget::currentDimensions() const {
 				result = QSize(gif->width(), gif->height());
 			}
 		}
+		const auto max = _maxContentSize
+			? _maxContentSize
+			: st::maxStickerSize;
 		if (_document->sticker()) {
-			box = QSize(st::maxStickerSize, st::maxStickerSize);
+			box = QSize(max, max);
 			if (_document->isPremiumSticker()) {
 				result = (box /= kPremiumDownscale);
 			}
 		} else {
-			box = QSize(2 * st::maxStickerSize, 2 * st::maxStickerSize);
+			box = QSize(2 * max, 2 * max);
 		}
 	}
 	result = QSize(

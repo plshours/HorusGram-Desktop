@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/qt/qt_compare.h"
 #include "base/timer.h"
 #include "chat_helpers/compose/compose_features.h"
+#include "ui/text/text.h"
 #include "ui/widgets/fields/input_field.h"
 
 #ifndef TDESKTOP_DISABLE_SPELLCHECK
@@ -80,10 +81,13 @@ struct MessageFieldHandlersArgs {
 	not_null<Ui::InputField*> field;
 	Fn<bool()> customEmojiPaused;
 	Fn<bool(not_null<DocumentData*>)> allowPremiumEmoji;
+	Fn<bool(QStringView)> keepCustomEmojiData;
+	Ui::Text::CustomEmojiFactory customEmojiFactory;
 	const style::InputField *fieldStyle = nullptr;
 	Fn<QString(QString)> linkValidator;
 	base::flat_set<QString> allowMarkdownTags;
 	bool allowTypedMarkdown = true;
+	bool instantMarkdown = false;
 };
 auto InitMessageFieldHandlers(MessageFieldHandlersArgs &&args)
 -> std::shared_ptr<Ui::ChatStyle>;
@@ -125,6 +129,7 @@ struct InlineBotQuery {
 InlineBotQuery ParseInlineBotQuery(
 	not_null<Main::Session*> session,
 	not_null<const Ui::InputField*> field);
+[[nodiscard]] TextWithEntities PreventInlineBotQuery(TextWithEntities text);
 
 struct AutocompleteQuery {
 	QString query;
@@ -153,6 +158,7 @@ public:
 
 	void parseNow();
 	void setDisabled(bool disabled);
+	[[nodiscard]] bool disabled() const;
 
 	[[nodiscard]] const rpl::variable<QStringList> &list() const {
 		return _list;
@@ -179,7 +185,8 @@ private:
 
 [[nodiscard]] base::unique_qptr<Ui::RpWidget> CreateDisabledFieldView(
 	QWidget *parent,
-	not_null<PeerData*> peer);
+	not_null<PeerData*> peer,
+	QWidget *toastParent = nullptr);
 [[nodiscard]] std::unique_ptr<Ui::RpWidget> TextErrorSendRestriction(
 	QWidget *parent,
 	const QString &text);
@@ -204,7 +211,6 @@ struct FreezeInfoStyleOverride {
 	const style::FlatLabel *infoTitle = nullptr;
 	const style::FlatLabel *infoAbout = nullptr;
 };
-[[nodiscard]] FreezeInfoStyleOverride DarkFreezeInfoStyle();
 
 enum class FrozenWriteRestrictionType {
 	MessageField,
@@ -223,6 +229,10 @@ void SelectTextInFieldWithMargins(
 	not_null<Ui::InputField*> field,
 	const TextSelection &selection);
 
+[[nodiscard]] TextSelection EditFieldSelection(
+	const TextWithTags &text,
+	TextSelection selection);
+
 [[nodiscard]] TextWithEntities PaidSendButtonText(tr::now_t, int stars);
 [[nodiscard]] rpl::producer<TextWithEntities> PaidSendButtonText(
 	rpl::producer<int> stars,
@@ -236,3 +246,5 @@ void FrozenInfoBox(
 [[nodiscard]] Ui::InputField::MimeDataHook WrappedMessageFieldMimeHook(
 	Ui::InputField::MimeDataHook original,
 	not_null<Ui::InputField*> field);
+
+[[nodiscard]] bool PasteAsPlainTextRequested();

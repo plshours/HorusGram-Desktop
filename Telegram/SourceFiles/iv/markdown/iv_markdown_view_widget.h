@@ -7,17 +7,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "iv/markdown/iv_markdown_article.h"
-#include "iv/markdown/iv_markdown_view.h"
-
 #include "base/timer.h"
 #include "base/unique_qptr.h"
+#include "iv/markdown/iv_markdown_article.h"
+#include "iv/markdown/iv_markdown_view.h"
 #include "rpl/lifetime.h"
+#include "ui/style/style_core_types.h"
+#include "ui/widgets/tooltip.h"
 #include "ui/click_handler.h"
 #include "ui/rp_widget.h"
-#include "ui/style/style_core_types.h"
 #include "ui/ui_utility.h"
-#include "ui/widgets/tooltip.h"
 
 #include <functional>
 #include <memory>
@@ -73,7 +72,8 @@ public:
 	[[nodiscard]] bool expandDetailsToAnchor(const QString &anchorId);
 	[[nodiscard]] bool expandDetailsBlock(const QString &anchorId);
 	[[nodiscard]] QRect segmentRect(int segmentIndex) const;
-	[[nodiscard]] bool toggleDetails(const QString &anchorId);
+	bool toggleDetails(const QString &anchorId);
+	bool toggleBlockquote(const QString &toggleId);
 	[[nodiscard]] int lastRelayoutMs() const;
 	int resizeGetHeight(int newWidth) override;
 	void requestRepaint(QRect articleRect) override;
@@ -133,9 +133,15 @@ private:
 	void copySelectedText();
 	void copyCodeBlock(const MarkdownArticleHitTestResult &state);
 
+	[[nodiscard]] Ui::VisibleRange articleVisibleBand() const;
 	void syncArticleVisibleTopBottom();
-	void relayoutCurrentWidth(bool clearSelection);
+	int relayoutCurrentWidth(bool clearSelection);
 	void forceRelayoutCurrentWidth();
+	void scheduleFormattedDateRefresh();
+	void refreshFormattedDates();
+	[[nodiscard]] bool formattedDateRefreshVisible() const;
+	void watchFormattedDateVisibility();
+	void applyFormattedDateVisibility();
 	void retryMissingMediaBlocks();
 	void updateHover(const MarkdownArticleHitTestResult &state);
 	void updateHoverAtCursor();
@@ -148,6 +154,8 @@ private:
 	[[nodiscard]] MarkdownArticlePaintContext textPaintContext(QRect clip);
 	void touchEvent(QTouchEvent *e);
 	void stopPressedPlaceholderRipple();
+	void stopPressedButtonRowRipple();
+	void stopPressedInlineButtonRipple();
 	void dragActionStart(QPoint point, Qt::MouseButton button);
 	MarkdownArticleHitTestResult dragActionUpdate(QPoint point);
 	MarkdownArticleHitTestResult dragActionFinish(
@@ -183,8 +191,14 @@ private:
 	TextSelection _dragExpandedSelection;
 	QPoint _tripleClickPoint;
 	base::Timer _tripleClickTimer;
+	base::Timer _formattedDateTimer;
+	rpl::lifetime _formattedDateVisibilityLifetime;
+	bool _formattedDateVisible = false;
 	std::optional<PreparedLink> _selectionClickPreparedLink;
 	PreparedPlaceholderBlockId _pressedPlaceholderId;
+	MarkdownArticleButtonRowHit _pressedButtonRow;
+	QString _hoverTooltip;
+	bool _pressedInlineButton = false;
 	bool _dragStartHadSelection = false;
 	int _lastRelayoutMs = 0;
 	int _zoom = 100;

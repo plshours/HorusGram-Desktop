@@ -7,27 +7,28 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "chat_helpers/emoji_suggestions_widget.h"
 
-#include "chat_helpers/emoji_keywords.h"
-#include "core/core_settings.h"
-#include "core/application.h"
-#include "emoji_suggestions_helper.h"
-#include "ui/effects/ripple_animation.h"
-#include "ui/widgets/shadow.h"
-#include "ui/widgets/inner_dropdown.h"
-#include "ui/widgets/fields/input_field.h"
-#include "ui/emoji_config.h"
-#include "ui/ui_utility.h"
-#include "ui/cached_round_corners.h"
-#include "ui/round_rect.h"
-#include "platform/platform_specific.h"
-#include "core/application.h"
 #include "base/event_filter.h"
 #include "base/integration.h"
-#include "main/main_session.h"
-#include "data/data_session.h"
-#include "data/data_document.h"
+#include "chat_helpers/emoji_keywords.h"
+#include "core/application.h"
+#include "core/application.h"
+#include "core/core_settings.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/stickers/data_stickers.h"
+#include "data/data_document.h"
+#include "data/data_session.h"
+#include "emoji_suggestions_helper.h"
+#include "main/main_session.h"
+#include "platform/platform_specific.h"
+#include "ui/effects/ripple_animation.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/inner_dropdown.h"
+#include "ui/widgets/shadow.h"
+#include "ui/cached_round_corners.h"
+#include "ui/emoji_config.h"
+#include "ui/round_rect.h"
+#include "ui/ui_utility.h"
+
 #include "styles/style_chat_helpers.h"
 
 #include <QtWidgets/QApplication>
@@ -55,6 +56,7 @@ public:
 	void showWithQuery(SuggestionsQuery query, bool force = false);
 	void selectFirstResult();
 	bool handleKeyEvent(int key);
+	[[nodiscard]] bool consumesEnter() const;
 
 	[[nodiscard]] rpl::producer<bool> toggleAnimated() const;
 
@@ -684,6 +686,10 @@ void SuggestionsWidget::mouseReleaseEvent(QMouseEvent *e) {
 	}
 }
 
+bool SuggestionsWidget::consumesEnter() const {
+	return (_selected >= 0) && (_selected < int(_rows.size()));
+}
+
 bool SuggestionsWidget::triggerSelectedRow() const {
 	if (_selected >= 0) {
 		triggerRow(_rows[_selected]);
@@ -868,6 +874,10 @@ void SuggestionsController::handleTextChange() {
 			_suggestions->selectFirstResult();
 		}
 	}
+}
+
+bool SuggestionsController::consumesEnter() const {
+	return shown() && _suggestions && _suggestions->consumesEnter();
 }
 
 void SuggestionsController::showWithQuery(SuggestionsQuery query) {

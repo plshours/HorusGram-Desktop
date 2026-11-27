@@ -27,6 +27,8 @@ inline bool SkipTaskbarSupported() {
 	return false;
 }
 
+[[nodiscard]] bool HasTouchBar();
+
 void ActivateThisProcess();
 
 inline uint64 ActivationWindowId(not_null<QWidget*> window) {
@@ -71,4 +73,3 @@ int psFixPrevious();
 
 void psDownloadPathEnableAccess();
 QByteArray psDownloadPathBookmark(const QString &path);
-QByteArray psPathBookmark(const QString &path);

@@ -56,21 +56,28 @@ std::optional<MessageSelection> KeyboardTextSelection::extend(
 
 	const auto position = int(_focus.offset());
 	const auto forward = (key == Qt::Key_Right);
-#ifdef Q_OS_MAC
+#ifdef Q_OS_MACOS
 	const auto byWord = (modifiers & Qt::AltModifier) != 0;
-#else // Q_OS_MAC
+#else // Q_OS_MACOS
 	const auto byWord = (modifiers & Qt::ControlModifier) != 0;
-#endif // Q_OS_MAC
+#endif // Q_OS_MACOS
 	auto wanted = position;
 	if (key == Qt::Key_Home) {
 		wanted = 0;
 	} else if (key == Qt::Key_End) {
 		wanted = maxOffset;
 	} else if (byWord) {
-		const auto separator = [&](int symbol) {
+		const auto at = [&](int symbol) {
 			const auto one = view->selectedText(
 				TextSelection(uint16(symbol), uint16(symbol + 1))).rich.text;
-			return one.isEmpty() || Ui::Text::IsWordSeparator(one[0]);
+
+			// A part that gives no text of its own is an object in the flow.
+			return one.isEmpty()
+				? QChar(QChar::ObjectReplacementCharacter)
+				: one[0];
+		};
+		const auto separator = [&](int symbol) {
+			return Ui::Text::IsWordSeparator(at, maxOffset, symbol);
 		};
 		auto symbol = position;
 		if (forward) {

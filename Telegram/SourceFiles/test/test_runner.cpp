@@ -5,12 +5,14 @@ the official desktop application for the Telegram messaging service.
 For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
-#ifdef _DEBUG
+#if defined _DEBUG || defined TDESKTOP_RELEASE_TEST_HARNESS
 
 #include "test/test_runner.h"
 
 #include "test/test_agent.h"
+#include "test/test_capture.h"
 #include "test/test_log.h"
+#include "test/test_session_gate.h"
 #include "base/call_delayed.h"
 #include "core/application.h"
 #include "data/data_session.h"
@@ -19,14 +21,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "settings.h"
 
+#include <QtCore/QPointer>
 #include <QtCore/QTimer>
+
+#include <limits>
 
 namespace Test {
 namespace {
 
 constexpr auto kTickInterval = crl::time(50);
 constexpr auto kDefaultWatchdogSeconds = 120;
-constexpr auto kAbortAfterQuitSeconds = 10;
+constexpr auto kMaxWatchdogSeconds = 3600;
+constexpr auto kAbortAfterQuit = 10 * crl::time(1000);
 
 // The fuse records a blocked launch inside the fused
 // Platform::File::Unsafe* wrapper, which a click reaches only across at
@@ -39,13 +45,28 @@ constexpr auto kAbortAfterQuitSeconds = 10;
 // main-queue quiescence having none.
 constexpr auto kFinishDrainDelay = crl::time(500);
 
+static_assert(kMaxWatchdogSeconds
+	<= std::numeric_limits<int>::max() / 1000);
+
 [[nodiscard]] crl::time WatchdogTimeout() {
 	const auto value = qEnvironmentVariable("TDESKTOP_TEST_WATCHDOG");
-	auto ok = false;
-	const auto seconds = value.toInt(&ok);
-	return crl::time(1000) * ((ok && seconds > 0)
-		? seconds
-		: kDefaultWatchdogSeconds);
+	auto selected = kDefaultWatchdogSeconds;
+	auto source = u"default"_q;
+	if (!value.isEmpty()) {
+		auto ok = false;
+		const auto seconds = value.toInt(&ok);
+		if (ok && seconds > 0 && seconds <= kMaxWatchdogSeconds) {
+			selected = seconds;
+			source = u"environment"_q;
+		} else {
+			Note(u"TDESKTOP_TEST_WATCHDOG rejected: %1"_q.arg(value));
+		}
+	}
+	Note(u"TDESKTOP_TEST_WATCHDOG=[%1] applied: %2s source=%3"_q.arg(
+		value,
+		QString::number(selected),
+		source));
+	return crl::time(1000) * selected;
 }
 
 [[nodiscard]] bool SessionReady() {
@@ -120,7 +141,7 @@ void StartChatsLoadedWait(
 		return;
 	}
 	Core::App().domain().activeSessionValue(
-	) | rpl::map([](Main::Session *session) {
+	) | rpl::map([](Main::Session *session) -> rpl::producer<Data::Folder*> {
 		if (!session) {
 			return rpl::never<Data::Folder*>();
 		}
@@ -160,9 +181,113 @@ void ObserveChatsLoadedDeadline(
 	return state->outcome == ChatsLoadedWaitOutcome::Loaded;
 }
 
+// A main-thread timer that came due while the thread was blocked is
+// delivered on the first event-loop pass after it is free again, so this
+// fuse can arrive arbitrarily late and cannot tell a slow teardown from a
+// run that wedged after recording its result. Once the completion marker
+// exists it therefore reports the overrun instead of aborting, and leaves
+// a post-marker wedge to the parent's grace kill and to
+// Core::DeadlockDetector. A run with no marker still aborts.
+void ResolveQuitFuse(crl::time deadline, crl::time fuse) {
+	const auto completedAt = CompletedAt();
+	if (!completedAt) {
+		std::abort();
+	}
+	const auto now = crl::now();
+	LogRaw(u"TEARDOWN_SLOW: the completion marker is already written, not "
+		"aborting; fuseMs=%1 overdueMs=%2 sinceCompleteMs=%3"_q
+			.arg(qint64(fuse))
+			.arg(qint64(std::max(crl::time(0), now - deadline)))
+			.arg(qint64(now - completedAt)));
+}
+
+void ScheduleCompletion() {
+	base::call_delayed(kFinishDrainDelay, [] {
+		const auto failures = FailureCount();
+		const auto skipped = SkippedCount();
+		LogRaw(u"SCENARIO_RESULT: %1 (failures: %2%3)"_q.arg(
+			failures ? u"FAIL"_q : u"PASS"_q,
+			QString::number(failures),
+			skipped
+				? u", skipped: %1"_q.arg(skipped)
+				: QString()));
+		Complete();
+		Core::Quit();
+	});
+}
+
+// Waits |left| of the Test-session helper's post-switch drain, then asks
+// FinishSessionGateAfterDrain again: a timer that arrives before the
+// drain's recorded end only waits what it answers is still left, so
+// neither the drain's fresh check nor the completion comes early. The
+// re-armed wait ends at the same recorded deadline that Runner::finish()
+// already added to its quit fuse. Capturing |runner| relies on the
+// function-static Runner of Test::Start(), which outlives every timer.
+void CompleteAfterSessionDrain(not_null<Runner*> runner, crl::time left) {
+	if (!left) {
+		ScheduleCompletion();
+		return;
+	}
+	QTimer::singleShot(int(left), Qt::PreciseTimer, [=] {
+		CompleteAfterSessionDrain(
+			runner,
+			FinishSessionGateAfterDrain(runner));
+	});
+}
+
+// The first non-empty answer of |gates|, outermost first, else |own|: once
+// a gate refuses, later gates and |own| are not called.
+[[nodiscard]] Fn<QString()> InheritedSkipReason(
+		std::vector<Fn<QString()>> gates,
+		Fn<QString()> own) {
+	return [gates = std::move(gates), own = std::move(own)] {
+		for (const auto &gate : gates) {
+			auto reason = gate();
+			if (!reason.isEmpty()) {
+				return reason;
+			}
+		}
+		return own ? own() : QString();
+	};
+}
+
+[[nodiscard]] std::vector<Fn<bool(not_null<Runner*>)>> &ScenarioProviders() {
+	static auto result = std::vector<Fn<bool(not_null<Runner*>)>>();
+	return result;
+}
+
 } // namespace
 
+void RegisterScenarioProvider(Fn<bool(not_null<Runner*>)> provider) {
+	ScenarioProviders().push_back(std::move(provider));
+}
+
 void Runner::add(Stage stage) {
+	Expects(!_started);
+
+	if (!_inheritedGates.empty()) {
+		stage.skipReason = InheritedSkipReason(
+			_inheritedGates,
+			std::move(stage.skipReason));
+	}
+	_stages.push_back(std::move(stage));
+}
+
+void Runner::addGated(Fn<QString()> gate, Fn<void()> compose) {
+	Expects(!_started && gate && compose);
+
+	const auto first = std::make_shared<QString>();
+	_inheritedGates.push_back([=] {
+		if (first->isEmpty()) {
+			*first = gate();
+		}
+		return *first;
+	});
+	compose();
+	_inheritedGates.pop_back();
+}
+
+void Runner::addRecovery(Stage stage) {
 	Expects(!_started);
 
 	_stages.push_back(std::move(stage));
@@ -215,8 +340,121 @@ void Runner::waitForChatsLoadedStrict(crl::time timeout) {
 	});
 }
 
+void Runner::actOnWidget(
+		const QString &name,
+		Fn<QWidget*()> resolve,
+		Fn<void(QWidget*)> action,
+		Fn<bool(QWidget*)> ready,
+		crl::time timeout,
+		Fn<QString(QWidget*)> readinessDetails) {
+	struct State {
+		QPointer<QWidget> widget;
+		QString pendingReason;
+	};
+	const auto state = std::make_shared<State>();
+	add({
+		.name = u"act on widget: %1"_q.arg(name),
+		.until = [=] {
+			const auto widget = resolve();
+			if (!widget) {
+				state->widget = nullptr;
+				state->pendingReason = u"target does not exist"_q;
+				return false;
+			} else if (ready && !ready(widget)) {
+				state->widget = nullptr;
+				state->pendingReason = readinessDetails
+					? readinessDetails(widget)
+					: u"task readiness predicate did not pass"_q;
+				return false;
+			}
+			state->widget = widget;
+			state->pendingReason = QString();
+			return true;
+		},
+		.then = [=] {
+			if (const auto widget = state->widget.data()) {
+				action(widget);
+			} else {
+				Fail(
+					u"act on widget: %1"_q.arg(name),
+					u"accepted target was destroyed before the action"_q);
+			}
+		},
+		.timeout = timeout,
+		.timeoutDetails = [=] { return state->pendingReason; },
+	});
+}
+
+void Runner::captureWidget(
+		const QString &name,
+		Fn<QWidget*()> resolve,
+		Fn<bool(QWidget*)> ready,
+		crl::time timeout,
+		Fn<QString(QWidget*)> readinessDetails) {
+	captureAndInspect(
+		name,
+		std::move(resolve),
+		std::move(ready),
+		{},
+		timeout,
+		std::move(readinessDetails));
+}
+
+void Runner::captureAndInspect(
+		const QString &name,
+		Fn<QWidget*()> resolve,
+		Fn<bool(QWidget*)> ready,
+		Fn<void(QWidget*, const QImage &)> inspect,
+		crl::time timeout,
+		Fn<QString(QWidget*)> readinessDetails,
+		Fn<QString()> skipReason) {
+	const auto capture = std::make_shared<PreparedWidgetCapture>();
+	add({
+		.name = u"capture painted widget: %1"_q.arg(name),
+		.skipReason = std::move(skipReason),
+		.until = [=] {
+			const auto widget = resolve();
+			if (!capture->prepare(widget)) {
+				return false;
+			} else if (ready && !ready(widget)) {
+				capture->invalidate(
+					readinessDetails
+						? readinessDetails(widget)
+						: u"task readiness predicate did not pass"_q);
+				return false;
+			}
+			return true;
+		},
+		.then = [=] {
+			if (!capture->save(name) || !inspect) {
+				return;
+			}
+			if (const auto widget = capture->widget()) {
+				inspect(widget, capture->image());
+			} else {
+				Fail(
+					u"inspect capture %1"_q.arg(name),
+					u"accepted target was destroyed before inspection"_q);
+			}
+		},
+		.timeout = timeout,
+		.timeoutDetails = [=] { return capture->pendingReason(); },
+	});
+}
+
 bool Runner::empty() const {
 	return _stages.empty();
+}
+
+void Runner::onFinish(Fn<void()> callback) {
+	if (!callback) {
+		return;
+	}
+	if (_finished) {
+		callback();
+		return;
+	}
+	_onFinish.push_back(std::move(callback));
 }
 
 void Runner::start() {
@@ -229,7 +467,16 @@ void Runner::start() {
 		finish();
 	});
 	_watchdog.callOnce(WatchdogTimeout());
+	const auto refusal = ApplySessionGate(this, ReadSessionGate());
+	if (!refusal.isEmpty()) {
+		for (auto &stage : _stages) {
+			stage = RefusedStage(std::move(stage), refusal);
+		}
+	}
 	beginStage();
+	if (_finished) {
+		return;
+	}
 	_ticker.setCallback([=] { tick(); });
 	_ticker.callEach(kTickInterval);
 }
@@ -242,19 +489,38 @@ void Runner::tick() {
 	if (!stage.until || stage.until()) {
 		completeStage();
 	} else if (crl::now() - _stageStarted > stage.timeout) {
+		const auto details = stage.timeoutDetails
+			? stage.timeoutDetails()
+			: QString();
 		Fail(
 			u"stage timed out: %1"_q.arg(stage.name),
-			u"waited %1 ms"_q.arg(stage.timeout));
+			details.isEmpty()
+				? u"waited %1 ms"_q.arg(stage.timeout)
+				: u"waited %1 ms; last state: %2"_q.arg(
+					stage.timeout).arg(details));
 		finish();
 	}
 }
 
 void Runner::beginStage() {
-	const auto &stage = _stages[_index];
-	Step(stage.name);
-	_stageStarted = crl::now();
-	if (stage.run) {
-		stage.run();
+	while (true) {
+		const auto &stage = _stages[_index];
+		Step(stage.name);
+		_stageStarted = crl::now();
+		const auto reason = stage.skipReason
+			? stage.skipReason()
+			: QString();
+		if (reason.isEmpty()) {
+			if (stage.run) {
+				stage.run();
+			}
+			return;
+		}
+		Skipped(stage.name, reason);
+		if (++_index == int(_stages.size())) {
+			finish();
+			return;
+		}
 	}
 }
 
@@ -277,17 +543,17 @@ void Runner::finish() {
 	_finished = true;
 	_ticker.cancel();
 	_watchdog.cancel();
-	QTimer::singleShot(kAbortAfterQuitSeconds * 1000, [] {
-		std::abort();
+	const auto releases = std::move(_onFinish);
+	for (const auto &callback : releases) {
+		callback();
+	}
+	const auto settle = FinishSessionGate(this);
+	const auto fuse = settle + kAbortAfterQuit;
+	const auto fuseDeadline = crl::now() + fuse;
+	QTimer::singleShot(int(fuse), [=] {
+		ResolveQuitFuse(fuseDeadline, fuse);
 	});
-	base::call_delayed(kFinishDrainDelay, [] {
-		const auto failures = FailureCount();
-		LogRaw(u"SCENARIO_RESULT: %1 (failures: %2)"_q.arg(
-			failures ? u"FAIL"_q : u"PASS"_q,
-			QString::number(failures)));
-		Complete();
-		Core::Quit();
-	});
+	CompleteAfterSessionDrain(this, settle);
 }
 
 void Start() {
@@ -300,7 +566,13 @@ void Start() {
 	}
 	Started = true;
 	static auto runner = Runner();
-	SetupScenario(&runner);
+	const auto provided = ranges::any_of(ScenarioProviders(), [](
+			const Fn<bool(not_null<Runner*>)> &provider) {
+		return provider(&runner);
+	});
+	if (!provided) {
+		SetupScenario(&runner);
+	}
 	if (runner.empty()) {
 		Note(u"no scenario registered"_q);
 		return;
@@ -314,9 +586,102 @@ void Start() {
 	runner.start();
 }
 
+void AppendFinishReleaseSelfTest(
+		not_null<Runner*> runner,
+		FinishReleasePath path,
+		bool registerRelease) {
+	struct State {
+		base::Timer timer;
+		int releaseCount = 0;
+	};
+	const auto state = std::make_shared<State>();
+	state->timer.setCallback([] {});
+	state->timer.callEach(crl::time(5));
+
+	if (registerRelease) {
+		runner->onFinish([=] {
+			state->timer.cancel();
+			++state->releaseCount;
+			Note(u"finish-release: ran count=%1"_q.arg(state->releaseCount));
+			if (path == FinishReleasePath::LateRegister) {
+				runner->onFinish([=] {
+					Note(u"finish-release: late-ran"_q);
+				});
+			}
+		});
+	}
+
+	const auto skipReason = [=] {
+		return u"applies=0: finish-release skip-to-end armed=%1"_q.arg(
+			state->timer.isActive() ? 1 : 0);
+	};
+	const auto neverReady = [=] {
+		return !state->timer.isActive();
+	};
+	const auto requireArmed = [=] {
+		Check(
+			state->timer.isActive(),
+			u"finish-release self-test: the 5 ms timer is still armed"_q,
+			u"armed=%1"_q.arg(state->timer.isActive() ? 1 : 0));
+	};
+
+	switch (path) {
+	case FinishReleasePath::Timeout:
+		runner->add({
+			.name = u"finish-release self-test: timeout"_q,
+			.until = neverReady,
+			.timeout = crl::time(500),
+		});
+		return;
+	case FinishReleasePath::Watchdog:
+		runner->add({
+			.name = u"finish-release self-test: watchdog"_q,
+			.until = neverReady,
+			.timeout = kDefaultStageTimeout,
+		});
+		return;
+	case FinishReleasePath::Complete:
+		runner->add({
+			.name = u"finish-release self-test: complete"_q,
+			.then = requireArmed,
+		});
+		return;
+	case FinishReleasePath::CompleteWithTeardown:
+		runner->add({
+			.name = u"finish-release self-test: work"_q,
+			.then = requireArmed,
+		});
+		runner->add({
+			.name = u"finish-release self-test: teardown"_q,
+			.then = [=] {
+				requireArmed();
+				Note(u"finish-release: teardown-ran"_q);
+			},
+		});
+		return;
+	case FinishReleasePath::SkipAll:
+		runner->add({
+			.name = u"finish-release self-test: skipped first"_q,
+			.skipReason = skipReason,
+		});
+		runner->add({
+			.name = u"finish-release self-test: skipped last"_q,
+			.skipReason = skipReason,
+		});
+		return;
+	case FinishReleasePath::LateRegister:
+		runner->add({
+			.name = u"finish-release self-test: late register"_q,
+			.then = requireArmed,
+		});
+		return;
+	}
+	Unexpected("Unknown FinishReleasePath");
+}
+
 } // namespace Test
 
-#else // _DEBUG
+#else // _DEBUG || TDESKTOP_RELEASE_TEST_HARNESS
 
 #include "test/test_agent.h"
 
@@ -327,4 +692,4 @@ void Start() {
 
 } // namespace Test
 
-#endif // _DEBUG
+#endif // _DEBUG || TDESKTOP_RELEASE_TEST_HARNESS

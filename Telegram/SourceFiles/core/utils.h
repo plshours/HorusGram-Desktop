@@ -31,7 +31,7 @@ inline bool in_range(Value &&value, From &&from, Till &&till) {
 }
 
 inline bool CanReadDirectory(const QString &path) {
-#ifndef Q_OS_MAC // directory_iterator since 10.15
+#ifndef Q_OS_MACOS // directory_iterator since 10.15
 	std::error_code error;
 	std::filesystem::directory_iterator(path.toStdString(), error);
 	return !error;
@@ -124,22 +124,4 @@ QString rusKeyboardLayoutSwitch(const QString &from);
 
 inline int rowscount(int fullCount, int countPerRow) {
 	return (fullCount + countPerRow - 1) / countPerRow;
-}
-inline int floorclamp(int value, int step, int lowest, int highest) {
-	return std::clamp(value / step, lowest, highest);
-}
-inline int floorclamp(float64 value, int step, int lowest, int highest) {
-	return std::clamp(
-		static_cast<int>(std::floor(value / step)),
-		lowest,
-		highest);
-}
-inline int ceilclamp(int value, int step, int lowest, int highest) {
-	return std::clamp((value + step - 1) / step, lowest, highest);
-}
-inline int ceilclamp(float64 value, int32 step, int32 lowest, int32 highest) {
-	return std::clamp(
-		static_cast<int>(std::ceil(value / step)),
-		lowest,
-		highest);
 }

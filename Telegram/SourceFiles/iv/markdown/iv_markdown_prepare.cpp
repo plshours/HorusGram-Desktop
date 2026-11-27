@@ -6,12 +6,13 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "iv/markdown/iv_markdown_prepare.h"
-#include "iv/iv_rich_page.h"
+
 #include "iv/markdown/iv_markdown_prepare_blocks.h"
 #include "iv/markdown/iv_markdown_prepare_formulas.h"
 #include "iv/markdown/iv_markdown_prepare_native_blocks.h"
 #include "iv/markdown/iv_markdown_prepare_native_richtext.h"
 #include "iv/markdown/iv_markdown_prepare_state.h"
+#include "iv/iv_rich_page.h"
 #include "lang/lang_keys.h"
 
 #include <QtCore/QElapsedTimer>
@@ -189,12 +190,15 @@ NativeInstantViewPrepareResult TryPrepareNativeInstantView(
 	state.tableRenderLimits = request.tableRenderLimits.value_or(
 		PrepareTableRenderLimitsForIv());
 	state.editMode = request.editMode;
+	state.unsupportedBlockNotices = request.unsupportedBlockNotices;
+	state.disableButtons = request.disableButtons;
 	const auto finish = [&](NativeInstantViewPrepareResultKind kind, QString reason) {
 		state.result.debug.prepareMs = int(timer.elapsed());
 		return NativeInstantViewPrepareResult{
 			.kind = kind,
 			.content = std::move(state.result),
 			.debugReason = std::move(reason),
+			.buttonsDisabled = state.buttonsDisabled,
 		};
 	};
 
@@ -218,7 +222,7 @@ NativeInstantViewPrepareResult TryPrepareNativeInstantView(
 				NativeInstantViewPrepareResultKind::Failure,
 				state.result.failure.debugReason);
 		}
-		(void)PrepareNativeIvPlainPlaceholderBlock(
+		PrepareNativeIvPlainPlaceholderBlock(
 			u"Prepare Failed"_q,
 			&state.result.blocks.blocks);
 	}

@@ -35,8 +35,8 @@ constexpr auto kStoriesSliceLimit = 100;
 constexpr auto kProfileMusicSliceLimit = 100;
 
 struct LocationKey {
-	uint64 type;
-	uint64 id;
+	uint64 type = 0;
+	uint64 id = 0;
 
 	inline bool operator<(const LocationKey &other) const {
 		return std::tie(type, id) < std::tie(other.type, other.id);
@@ -290,6 +290,7 @@ void VisitRichBlock(
 		break;
 	case Kind::Video:
 	case Kind::Audio:
+	case Kind::File:
 		VisitRichDocument(message, block.documentId, callbacks);
 		VisitRichCaption(message, block.caption, callbacks);
 		break;
@@ -338,6 +339,11 @@ void VisitRichBlock(
 	case Kind::Map:
 	case Kind::InputMap:
 		VisitRichCaption(message, block.caption, callbacks);
+		break;
+	case Kind::ButtonRow:
+		for (auto &button : block.buttons) {
+			VisitRichText(message, button, callbacks);
+		}
 		break;
 	case Kind::Unsupported:
 	case Kind::Divider:
@@ -400,6 +406,22 @@ void VisitRichMessage(
 		textCallback,
 		photoCallback,
 		documentCallback);
+}
+
+ChatId MigratedFromChatId(const MTPmessages_Messages &result) {
+	auto chatId = ChatId();
+	result.match([](const MTPDmessages_messagesNotModified &) {
+	}, [&](const auto &data) {
+		for (const auto &message : data.vmessages().v) {
+			message.match([&](const MTPDmessageService &data) {
+				data.vaction().match([&](
+						const MTPDmessageActionChannelMigrateFrom &data) {
+					chatId = data.vchat_id();
+				}, [](const auto &) {});
+			}, [](const auto &) {});
+		}
+	});
+	return chatId;
 }
 
 } // namespace
@@ -1797,6 +1819,7 @@ void ApiWrap::requestMessagesCount(int localSplitIndex) {
 	requestChatMessages(
 		_chatProcess->info.splits[localSplitIndex],
 		0, // offset_id
+		0, // offset_date
 		0, // add_offset
 		1, // limit
 		[=](const MTPmessages_Messages &result) {
@@ -1824,7 +1847,40 @@ void ApiWrap::requestMessagesCount(int localSplitIndex) {
 			messagesCountLoaded(localSplitIndex, 0);
 			return;
 		}
+		requestMessagesCountFromDate(localSplitIndex, count);
+	});
+}
+
+void ApiWrap::requestMessagesCountFromDate(int localSplitIndex, int count) {
+	Expects(_chatProcess != nullptr);
+	Expects(localSplitIndex < _chatProcess->info.splits.size());
+
+	if (_settings->singlePeerFrom <= 0
+		|| _chatProcess->info.onlyMyMessages) {
 		checkFirstMessageDate(localSplitIndex, count);
+		return;
+	}
+
+	// Request the count of messages sent since the requested date,
+	// messages sent exactly at offset_date are counted as older ones.
+	requestChatMessages(
+		_chatProcess->info.splits[localSplitIndex],
+		0, // offset_id
+		_settings->singlePeerFrom - 1, // offset_date
+		0, // add_offset
+		1, // limit
+		[=](const MTPmessages_Messages &result) {
+		Expects(_chatProcess != nullptr);
+
+		const auto countFromDate = result.match([&](
+				const MTPDmessages_messagesSlice &data) {
+			return data.voffset_id_offset().value_or(count);
+		}, [&](const MTPDmessages_channelMessages &data) {
+			return data.voffset_id_offset().value_or(count);
+		}, [&](const auto &data) {
+			return count;
+		});
+		checkFirstMessageDate(localSplitIndex, countFromDate);
 	});
 }
 
@@ -1841,6 +1897,7 @@ void ApiWrap::checkFirstMessageDate(int localSplitIndex, int count) {
 	requestChatMessages(
 		_chatProcess->info.splits[localSplitIndex],
 		1, // offset_id
+		0, // offset_date
 		-1, // add_offset
 		1, // limit
 		[=](const MTPmessages_Messages &result) {
@@ -1936,25 +1993,70 @@ mtpRequestId ApiWrap::requestSinglePeerMigrated(
 	}, [](auto&&) -> MTPinputChannel {
 		Unexpected("Peer type in a supergroup.");
 	});
+	const auto peer = info.input;
+	const auto channelId = peerToChannel(info.peerId);
 	return mainRequest(MTPchannels_GetFullChannel(
 		input
 	)).done([=](const MTPmessages_ChatFull &result) {
-		auto info = result.match([&](
-				const MTPDmessages_chatFull &data) {
-			const auto migratedChatId = data.vfull_chat().match([&](
-					const MTPDchannelFull &data) {
-				return data.vmigrated_from_chat_id().value_or_empty();
-			}, [](auto &&other) -> BareId {
-				return 0;
-			});
-			return migratedChatId
-				? Data::ParseDialogsInfo(
-					MTP_inputPeerChat(MTP_long(migratedChatId)),
-					MTP_messages_chats(data.vchats()))
-				: Data::DialogsInfo();
+		const auto &data = result.data();
+		const auto migratedChatId = data.vfull_chat().match([&](
+				const MTPDchannelFull &data) {
+			return data.vmigrated_from_chat_id().value_or_empty();
+		}, [](auto &&other) -> BareId {
+			return 0;
 		});
-		appendSinglePeerDialogs(std::move(info));
+		if (migratedChatId) {
+			appendSinglePeerDialogs(Data::ParseDialogsInfo(
+				MTP_inputPeerChat(MTP_long(migratedChatId)),
+				MTP_messages_chats(data.vchats())));
+		} else {
+			requestSinglePeerMigratedFromHistory(peer, channelId);
+		}
 	}).send();
+}
+
+void ApiWrap::requestSinglePeerMigratedFromHistory(
+		const MTPInputPeer &peer,
+		ChannelId channelId) {
+	const auto skip = [=](const MTP::Error &) {
+		appendSinglePeerDialogs(Data::DialogsInfo());
+		return true;
+	};
+	const auto offsetId = 1;
+	const auto offsetDate = 0;
+	const auto addOffset = -1;
+	const auto limit = 1;
+	const auto maxId = 0;
+	const auto minId = 0;
+	const auto hash = uint64(0);
+	splitRequest(int(_splits.size()) - 1, MTPmessages_GetHistory(
+		peer,
+		MTP_int(offsetId),
+		MTP_int(offsetDate),
+		MTP_int(addOffset),
+		MTP_int(limit),
+		MTP_int(maxId),
+		MTP_int(minId),
+		MTP_long(hash)
+	)).done([=](const MTPmessages_Messages &result) {
+		const auto chatId = MigratedFromChatId(result);
+		if (!chatId) {
+			appendSinglePeerDialogs(Data::DialogsInfo());
+			return;
+		}
+		mainRequest(MTPmessages_GetChats(
+			MTP_vector<MTPlong>(1, MTP_long(chatId.bare))
+		)).done([=](const MTPmessages_Chats &result) {
+			auto info = Data::ParseDialogsInfo(
+				MTP_inputPeerChat(MTP_long(chatId.bare)),
+				result);
+			info.chats.erase(ranges::remove_if(info.chats, [&](
+					const Data::DialogInfo &chat) {
+				return (chat.migratedToChannelId != channelId);
+			}), end(info.chats));
+			appendSinglePeerDialogs(std::move(info));
+		}).fail(skip).send();
+	}).fail(skip).send();
 }
 
 void ApiWrap::appendSinglePeerDialogs(Data::DialogsInfo &&info) {
@@ -2205,9 +2307,16 @@ void ApiWrap::requestMessagesSlice() {
 		startMessagesSlice({});
 		return;
 	}
+	// Start from the requested date, messages sent exactly
+	// at offset_date are skipped as older ones.
+	const auto offsetDate = (_chatProcess->largestIdPlusOne == 1
+		&& _settings->singlePeerFrom > 0)
+		? (_settings->singlePeerFrom - 1)
+		: 0;
 	requestChatMessages(
 		_chatProcess->info.splits[_chatProcess->localSplitIndex],
 		_chatProcess->largestIdPlusOne,
+		offsetDate,
 		-kMessagesSliceLimit,
 		kMessagesSliceLimit,
 		[=](const MTPmessages_Messages &result) {
@@ -2232,6 +2341,7 @@ void ApiWrap::requestMessagesSlice() {
 void ApiWrap::requestChatMessages(
 		int splitIndex,
 		int offsetId,
+		int offsetDate,
 		int addOffset,
 		int limit,
 		FnMut<void(MTPmessages_Messages&&)> done) {
@@ -2275,8 +2385,8 @@ void ApiWrap::requestChatMessages(
 	} else {
 		splitRequest(realSplitIndex, MTPmessages_GetHistory(
 			realPeerInput,
-			MTP_int(offsetId),
-			MTP_int(0), // offset_date
+			MTP_int(offsetDate ? 0 : offsetId),
+			MTP_int(offsetDate),
 			MTP_int(addOffset),
 			MTP_int(limit),
 			MTP_int(0), // max_id
@@ -2295,6 +2405,7 @@ void ApiWrap::requestChatMessages(
 					requestChatMessages(
 						splitIndex,
 						offsetId,
+						offsetDate,
 						addOffset,
 						limit,
 						base::take(_chatProcess->requestDone));
@@ -2336,7 +2447,7 @@ void ApiWrap::resumeMessagesSlice() {
 		: static_cast<AbstractMessagesProcess*>(_chatProcess.get());
 	Expects(process->slice.has_value());
 
-	auto &list = process->slice->list;
+	const auto &list = process->slice->list;
 	while (process->hydrationIndex < list.size()) {
 		const auto index = process->hydrationIndex;
 		const auto &message = list[index];
@@ -2396,12 +2507,12 @@ void ApiWrap::hydrateMessageDone(
 		error("Unexpected rich message hydration result.");
 		return;
 	}
-	auto &list = process->slice->list;
+	const auto &list = process->slice->list;
 	if (index < 0 || index >= list.size()) {
 		error("Unexpected rich message hydration result.");
 		return;
 	}
-	auto &message = list[index];
+	const auto &message = list[index];
 	if (message.id != rawId
 		|| !message.richMessage
 		|| !message.richMessage->part) {
@@ -2862,17 +2973,6 @@ bool ApiWrap::loadMessageEmojiProgress(FileProgress progress) {
 	Expects(_chatProcess != nullptr);
 
 	return loadMessageFileProgress(_chatProcess->fileIndex, progress);
-}
-
-void ApiWrap::loadMessageEmojiDone(uint64 id, const QString &relativePath) {
-	const auto i = _resolvedCustomEmoji.find(id);
-	if (i != end(_resolvedCustomEmoji)) {
-		i->second.file.relativePath = relativePath;
-		if (relativePath.isEmpty()) {
-			i->second.file.skipReason = Data::File::SkipReason::Unavailable;
-		}
-	}
-	loadNextMessageFile();
 }
 
 bool ApiWrap::loadTopicEmojiProgress(FileProgress progress) {

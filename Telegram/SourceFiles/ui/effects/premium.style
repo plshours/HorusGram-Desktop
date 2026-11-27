@@ -16,7 +16,7 @@ PremiumBubble {
 	height: pixels;
 	padding: margins;
 	skip: pixels;
-	penWidth: pixels;
+	tailRadius: pixels;
 	textSkip: pixels;
 	tailSize: size;
 	font: font;
@@ -79,6 +79,8 @@ defaultPremiumBoxLabel: FlatLabel(defaultFlatLabel) {
 }
 defaultPremiumLimits: PremiumLimits {
 	boxLabel: defaultPremiumBoxLabel;
+	listTitle: defaultFlatLabel;
+	listAbout: boxDividerLabel;
 	nonPremiumBg: windowBgOver;
 	nonPremiumFg: windowFg;
 	gradientFromLeft: false;
@@ -96,6 +98,10 @@ premiumPreviewBox: Box(defaultBox) {
 }
 premiumPreviewDoubledLimitsBox: Box(premiumPreviewBox) {
 	buttonPadding: margins(12px, 12px, 12px, 12px);
+}
+storyPostingLimitBox: Box(premiumPreviewBox) {
+	buttonPadding: margins(16px, 12px, 16px, 16px);
+	buttonWide: true;
 }
 premiumPreviewAboutTitlePadding: margins(18px, 19px, 18px, 0px);
 premiumPreviewAboutTitle: FlatLabel(defaultFlatLabel) {
@@ -129,6 +135,20 @@ premiumDotPadding: margins(4px, 4px, 4px, 4px);
 premiumDotsMargin: margins(0px, 5px, 0px, 6px);
 premiumVideoWidth: 182px;
 
+premiumPromoParticlesInset: 30px;
+premiumPromoParticlesDeviceSkip: 10px;
+premiumPromoIconSmall: 14px;
+premiumPromoIconMedium: 15px;
+premiumPromoIconLarge: 16px;
+premiumPromoIconWide: 18px;
+premiumPromoStarSmall: 4px;
+premiumPromoStarMedium: 10px;
+premiumPromoStarLarge: 12px;
+premiumPromoMatrixCell: 16px;
+premiumPromoSpeedInset: 100px;
+premiumPromoSpeedLine: 30px;
+premiumPromoHelloFont: font(24px bold);
+
 // Graphics.
 
 defaultPremiumBubble: PremiumBubble {
@@ -136,7 +156,7 @@ defaultPremiumBubble: PremiumBubble {
 	height: 40px;
 	padding: margins(14px, 0px, 14px, 0px);
 	skip: 8px;
-	penWidth: 6px;
+	tailRadius: 3px;
 	textSkip: 3px;
 	tailSize: size(21px, 7px);
 	font: font(19px);
@@ -153,6 +173,7 @@ premiumIconLinks: icon {{ "limits/links", settingsIconFg }};
 premiumIconPins: icon {{ "limits/pins", settingsIconFg }};
 premiumIconAccounts: icon {{ "limits/accounts", settingsIconFg }};
 premiumIconBoost: icon {{ "limits/boost", settingsIconFg }};
+premiumIconStories: icon {{ "limits/stories-24x24", activeButtonFg }};
 
 premiumAccountsCheckbox: RoundImageCheckbox(defaultPeerListCheckbox) {
 	imageRadius: 27px;

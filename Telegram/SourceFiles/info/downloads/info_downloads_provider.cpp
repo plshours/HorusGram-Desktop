@@ -7,24 +7,25 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/downloads/info_downloads_provider.h"
 
-#include "info/media/info_media_widget.h"
-#include "info/media/info_media_list_section.h"
-#include "info/info_controller.h"
-#include "ui/text/format_song_document_name.h"
-#include "ui/ui_utility.h"
-#include "data/data_download_manager.h"
+#include "core/application.h"
 #include "data/data_document.h"
+#include "data/data_download_manager.h"
 #include "data/data_media_types.h"
 #include "data/data_session.h"
+#include "history/history.h"
+#include "history/history_item.h"
+#include "history/history_item_helpers.h"
+#include "info/media/info_media_list_section.h"
+#include "info/media/info_media_widget.h"
+#include "info/info_controller.h"
+#include "layout/layout_selection.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_session.h"
-#include "history/history_item.h"
-#include "history/history_item_helpers.h"
-#include "history/history.h"
-#include "core/application.h"
 #include "storage/storage_shared_media.h"
-#include "layout/layout_selection.h"
+#include "ui/text/format_song_document_name.h"
+#include "ui/ui_utility.h"
+
 #include "styles/style_overview.h"
 
 namespace Info::Downloads {
@@ -247,7 +248,13 @@ void Provider::remove(not_null<const HistoryItem*> item) {
 	_elements.erase(ranges::remove_if(_elements, proj), end(_elements));
 	if (const auto i = _layouts.find(item); i != end(_layouts)) {
 		_layoutRemoved.fire(i->second.item.get());
-		_layouts.erase(i);
+		// The list widget handles layoutRemoved() synchronously and may
+		// refresh its height from there, which can reach refreshViewer()
+		// -> refreshRows() -> fillSections() -> clearStaleLayouts() before
+		// we get back here, erasing this very entry, so look it up again.
+		if (const auto j = _layouts.find(item); j != end(_layouts)) {
+			_layouts.erase(j);
+		}
 	}
 	refreshPostponed(false);
 }
@@ -322,6 +329,9 @@ std::vector<ListSection> Provider::fillSections(
 		} else if (auto layout = getLayout(element, delegate)) {
 			section.addItem(layout);
 		}
+	}
+	if (section.empty()) {
+		return {};
 	}
 	section.finishSection();
 	return result;
@@ -443,7 +453,7 @@ std::unique_ptr<BaseLayout> Provider::createLayout(
 	};
 
 	using namespace Overview::Layout;
-	auto &songSt = st::overviewFileLayout;
+	const auto &songSt = st::overviewFileLayout;
 	if (const auto file = getFile()) {
 		auto fields = DocumentFields{
 			.document = file,

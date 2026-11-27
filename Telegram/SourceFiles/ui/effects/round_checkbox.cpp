@@ -8,10 +8,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/round_checkbox.h"
 
 #include "lang/lang_keys.h"
+#include "ui/effects/outline_segments.h"
+#include "ui/painter.h"
 #include "ui/rp_widget.h"
 #include "ui/ui_utility.h"
-#include "ui/painter.h"
-#include "ui/effects/outline_segments.h"
+
 #include "styles/style_calls.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_widgets.h"
@@ -141,7 +142,7 @@ QRect WideDestRect(
 		int y,
 		float64 scale) {
 	auto iconSizeFull = kWideScale * st->size;
-	auto iconSize = qRound(iconSizeFull * scale);
+	auto iconSize = int(base::SafeRound(iconSizeFull * scale));
 	if (iconSize % 2 != iconSizeFull % 2) {
 		++iconSize;
 	}
@@ -417,9 +418,9 @@ void RoundImageCheckbox::paintFrame(
 		int outerWidth) const {
 	auto selectionLevel = _selection.value(checked() ? 1. : 0.);
 	if (_selection.animating()) {
-		auto userpicRadius = qRound(kWideScale
+		auto userpicRadius = int(base::SafeRound(kWideScale
 			* (_st.imageRadius + (_st.imageSmallRadius - _st.imageRadius)
-				* selectionLevel));
+				* selectionLevel)));
 		auto userpicShift = kWideScale * _st.imageRadius - userpicRadius;
 		auto userpicLeft = x
 			- ((kWideScale - 1) * _st.imageRadius)

@@ -6,10 +6,9 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/translate_box.h"
-#include "boxes/translate_box_content.h"
-#include "lang/translate_provider.h"
 
 #include "base/weak_ptr.h"
+#include "boxes/translate_box_content.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "core/core_settings.h"
@@ -26,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/iv_rich_page.h"
 #include "lang/lang_instance.h"
 #include "lang/lang_keys.h"
+#include "lang/translate_provider.h"
 #include "main/main_session.h"
 #include "mtproto/sender.h"
 #include "spellcheck/platform/platform_language.h"
@@ -35,6 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/labels.h"
 #include "ui/widgets/multi_select.h"
+#include "ui/widgets/selecting_scroll.h"
 #include "ui/wrap/fade_wrap.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/basic_click_handlers.h"
@@ -99,7 +100,10 @@ void ActivateRichTranslateLink(
 		UrlClickHandler::Open(target, context);
 	} break;
 	case Kind::ToggleDetails:
-		static_cast<void>(body->toggleDetails(link.target));
+		body->toggleDetails(link.target);
+		break;
+	case Kind::ToggleBlockquote:
+		body->toggleBlockquote(link.target);
 		break;
 	default:
 		break;
@@ -176,14 +180,18 @@ void SetupRichArticleBody(
 	style::PaletteChanged() | rpl::on_next([=] {
 		body->refreshPalette();
 	}, body->lifetime());
+	SetupSelectingScroll(body, [=](int pixels) {
+		box->scrollToY(box->scrollTop() + pixels);
+	});
 }
 
-[[nodiscard]] bool ShowRichArticlePage(
+bool ShowRichArticlePage(
 		not_null<Main::Session*> session,
 		FullMsgId itemId,
 		not_null<Iv::Markdown::MarkdownDocumentWidget*> body,
 		not_null<std::shared_ptr<Iv::Markdown::MarkdownArticle>*> article,
 		std::shared_ptr<const Iv::RichPage> page) {
+	const auto item = session->data().message(itemId);
 	const auto limits = Iv::ResolveRichMessageLimits(session);
 	auto prepared = Iv::Markdown::TryPrepareNativeInstantView({
 		.richPage = page,
@@ -197,9 +205,13 @@ void SetupRichArticleBody(
 			st::translateBoxMarkdown),
 		.tableRenderLimits
 			= Iv::Markdown::PrepareTableRenderLimitsForRichMessage(limits),
+		.disableButtons = (item && item->hideLinks()),
 	});
 	if (!prepared.supported()) {
 		return false;
+	}
+	if (item && prepared.buttonsDisabled) {
+		item->setHasHiddenLinks(true);
 	}
 	if (!*article) {
 		*article = std::make_shared<Iv::Markdown::MarkdownArticle>(
@@ -230,6 +242,7 @@ void SetupRichArticleBody(
 		mtpRequestId requestId = 0;
 		std::shared_ptr<Iv::Markdown::MarkdownArticle> original;
 		std::shared_ptr<Iv::Markdown::MarkdownArticle> translated;
+		std::shared_ptr<const Iv::RichPage> translatedPage;
 	};
 	const auto session = &peer->session();
 	const auto itemId = FullMsgId(peer->id, msgId);
@@ -315,16 +328,17 @@ void SetupRichArticleBody(
 	Ui::AddDivider(container);
 	Ui::AddSkip(container);
 
-	{
+	const auto setCopyText = [&] {
 		const auto padding = st::defaultSubsectionTitlePadding;
-		const auto subtitle = Ui::AddSubsectionTitle(container, std::move(toTitle));
+		const auto subtitle = Ui::AddSubsectionTitle(container, toTitle);
 
 		rpl::duplicate(to) | rpl::on_next([=] {
 			subtitle->resizeToWidth(container->width()
 				- padding.left()
 				- padding.right());
 		}, subtitle->lifetime());
-	}
+		return AddTranslateCopyButton(container, subtitle, hasCopyRestriction);
+	}();
 
 	const auto translated = box->addRow(
 		object_ptr<SlideWrap<Iv::Markdown::MarkdownDocumentWidget>>(
@@ -354,6 +368,7 @@ void SetupRichArticleBody(
 			textContext);
 		error->show(anim::type::instant);
 		loading->hide(anim::type::instant);
+		setCopyText({});
 	};
 	const auto showResult = [=](std::shared_ptr<const Iv::RichPage> result) {
 		if (result
@@ -363,8 +378,10 @@ void SetupRichArticleBody(
 				translated->entity(),
 				&state->translated,
 				result)) {
+			state->translatedPage = result;
 			translated->show(anim::type::instant);
 			loading->hide(anim::type::instant);
+			setCopyText(Iv::FlattenRichPageToSimpleText(*result));
 		} else {
 			showError();
 		}
@@ -374,6 +391,7 @@ void SetupRichArticleBody(
 		loading->show(anim::type::instant);
 		translated->hide(anim::type::instant);
 		error->hide(anim::type::instant);
+		setCopyText({});
 		using Flag = MTPmessages_TranslateRichMessage::Flag;
 		state->requestId = state->api.request(
 			MTPmessages_TranslateRichMessage(
@@ -394,12 +412,31 @@ void SetupRichArticleBody(
 			showResult(nullptr);
 		}).send();
 	};
+	const auto item = session->data().message(itemId);
+	if (item && item->hideLinks()) {
+		session->data().itemViewRefreshRequest(
+		) | rpl::filter([=](not_null<const HistoryItem*> refreshed) {
+			return (refreshed->fullId() == itemId) && !refreshed->hideLinks();
+		}) | rpl::take(1) | rpl::on_next([=] {
+			ShowRichArticlePage(
+				session,
+				itemId,
+				original->entity(),
+				&state->original,
+				page);
+			if (const auto translatedPage = state->translatedPage) {
+				ShowRichArticlePage(
+					session,
+					itemId,
+					translated->entity(),
+					&state->translated,
+					translatedPage);
+			}
+		}, box->lifetime());
+	}
 	std::move(to) | rpl::on_next(send, box->lifetime());
 
 	box->addLeftButton(tr::lng_settings_language(), [=] {
-		if (loading->toggled()) {
-			return;
-		}
 		box->uiShow()->showBox(ChooseTranslateToBox(
 			state->to.current(),
 			crl::guard(box, [=](LanguageId id) { state->to = id; })));
@@ -546,7 +583,7 @@ object_ptr<BoxContent> EditSkipTranslationLanguages() {
 object_ptr<BoxContent> ChooseTranslateToBox(
 		LanguageId bringUp,
 		Fn<void(LanguageId)> callback) {
-	auto &settings = Core::App().settings();
+	const auto &settings = Core::App().settings();
 	auto selected = std::vector<LanguageId>{
 		settings.translateTo(),
 	};
@@ -574,7 +611,7 @@ LanguageId ChooseTranslateTo(not_null<History*> history) {
 }
 
 LanguageId ChooseTranslateTo(LanguageId offeredFrom) {
-	auto &settings = Core::App().settings();
+	const auto &settings = Core::App().settings();
 	return ChooseTranslateTo(
 		offeredFrom,
 		settings.translateTo(),

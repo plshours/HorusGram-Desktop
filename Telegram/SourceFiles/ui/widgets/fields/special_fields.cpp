@@ -7,8 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/widgets/fields/special_fields.h"
 
-#include "lang/lang_keys.h"
 #include "countries/countries_instance.h" // Countries::ValidPhoneCode
+#include "lang/lang_keys.h"
+
 #include "styles/style_widgets.h"
 
 #include <QtCore/QRegularExpression>
@@ -31,6 +32,8 @@ CountryCodeInput::CountryCodeInput(
 	QWidget *parent,
 	const style::InputField &st)
 : MaskedInputField(parent, st) {
+	setInputMethodHints(Qt::ImhDialableCharactersOnly
+		| Qt::ImhNoPredictiveText);
 }
 
 void CountryCodeInput::startErasing(QKeyEvent *e) {
@@ -111,6 +114,8 @@ PhonePartInput::PhonePartInput(
 	PhonePartInput::GroupsCallback groupsCallback)
 : MaskedInputField(parent, st/*, tr::lng_phone_ph(tr::now)*/)
 , _groupsCallback(std::move(groupsCallback)) {
+	setInputMethodHints(Qt::ImhDialableCharactersOnly
+		| Qt::ImhNoPredictiveText);
 }
 
 void PhonePartInput::paintAdditionalPlaceholder(QPainter &p) {
@@ -215,6 +220,19 @@ void PhonePartInput::correctValue(
 }
 
 void PhonePartInput::addedToNumber(const QString &added) {
+	if (_addingToNumber) {
+		// Re-entered from inside setFocus() below: on Windows a focus
+		// change while an IME composition is still open makes
+		// QWindowsInputContext::reset() re-send the same commit event to
+		// the country code field, which corrects its value and fires
+		// addedToNumber() again, until the stack overflows.
+		return;
+	}
+	_addingToNumber = true;
+	const auto guard = gsl::finally([&] {
+		_addingToNumber = false;
+	});
+
 	setFocus();
 	auto wasText = getLastText();
 	auto wasCursor = cursorPosition();
@@ -269,6 +287,9 @@ UsernameInput::UsernameInput(
 	const QString &val,
 	const QString &linkPlaceholder)
 : MaskedInputField(parent, st, std::move(placeholder), val) {
+	setInputMethodHints(Qt::ImhLatinOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 	setLinkPlaceholder(linkPlaceholder);
 }
 
@@ -332,6 +353,8 @@ PhoneInput::PhoneInput(
 : MaskedInputField(parent, st, std::move(placeholder), value)
 , _defaultValue(defaultValue)
 , _groupsCallback(std::move(groupsCallback)) {
+	setInputMethodHints(Qt::ImhDialableCharactersOnly
+		| Qt::ImhNoPredictiveText);
 	if (value.isEmpty()) {
 		clearText();
 	} else {
@@ -401,7 +424,10 @@ void PhoneInput::correctValue(
 	}
 
 	QString newText;
-	int oldPos(nowCursor), newPos(-1), oldLen(now.length()), digitCount = qMin(digits.size(), kMaxPhoneCodeLength + kMaxPhoneTailLength);
+	int oldPos(nowCursor), newPos(-1), oldLen(now.length()), digitCount
+		= std::min(
+		int(digits.size()),
+		kMaxPhoneCodeLength + kMaxPhoneTailLength);
 
 	bool inPart = !_pattern.isEmpty(), plusFound = false;
 	int curPart = 0, leftInPart = inPart ? _pattern.at(curPart) : 0;

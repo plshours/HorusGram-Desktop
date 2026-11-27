@@ -7,50 +7,55 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "boxes/connection_box.h"
 
-#include "base/call_delayed.h"
 #include "base/qt/qt_key_modifiers.h"
+#include "base/call_delayed.h"
 #include "base/qthelp_regex.h"
 #include "base/qthelp_url.h"
 #include "base/weak_ptr.h"
+#include "boxes/abstract_box.h" // Ui::show().
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_session.h"
+#include "mtproto/web_proxy/web_proxy_transport.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_config.h"
 #include "mtproto/proxy_check.h"
 #include "qr/qr_generate.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
-#include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/peer_qr_box.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/radial_animation.h"
-#include "ui/painter.h"
+#include "ui/effects/round_checkbox.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/dropdown_menu.h"
-#include "ui/widgets/discrete_sliders.h"
 #include "ui/widgets/fields/input_field.h"
 #include "ui/widgets/fields/number_input.h"
 #include "ui/widgets/fields/password_input.h"
-#include "ui/widgets/labels.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/discrete_sliders.h"
+#include "ui/widgets/dropdown_menu.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/selecting_scroll.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/table_layout.h"
 #include "ui/wrap/vertical_layout.h"
-#include "ui/vertical_list.h"
+#include "ui/basic_click_handlers.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
 #include "ui/ui_utility.h"
-#include "boxes/abstract_box.h" // Ui::show().
+#include "ui/vertical_list.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_connection_box.h"
@@ -69,6 +74,15 @@ namespace {
 constexpr auto kSaveSettingsDelayedTimeout = crl::time(1000);
 
 using ProxyData = MTP::ProxyData;
+
+struct TopButtonMenuState {
+	~TopButtonMenuState() {
+		closing = true;
+	}
+
+	bool closing = false;
+	base::unique_qptr<Ui::PopupMenu> menu;
+};
 
 [[nodiscard]] int ClosestProxyRotationTimeoutSection(int value) {
 	auto result = 0;
@@ -101,7 +115,8 @@ using ProxyData = MTP::ProxyData;
 [[nodiscard]] bool ProxyDataIsShareable(const ProxyData &proxy) {
 	using Type = ProxyData::Type;
 	return (proxy.type == Type::Socks5)
-		|| (proxy.type == Type::Mtproto);
+		|| (proxy.type == Type::Mtproto)
+		|| (proxy.type == Type::Web);
 }
 
 [[nodiscard]] QString ProxyDataToQueryPath(const ProxyData &proxy) {
@@ -110,6 +125,7 @@ using ProxyData = MTP::ProxyData;
 		switch (proxy.type) {
 		case Type::Socks5: return u"socks"_q;
 		case Type::Mtproto: return u"proxy"_q;
+		case Type::Web: return u"webproxy"_q;
 		case Type::None:
 		case Type::Http: return QString();
 		}
@@ -118,14 +134,22 @@ using ProxyData = MTP::ProxyData;
 	if (path.isEmpty()) {
 		return QString();
 	}
+	const auto server = (proxy.type == Type::Web)
+		? qthelp::url_encode(proxy.webAddress())
+		: proxy.host;
 	return path
-		+ "?server=" + proxy.host + "&port=" + QString::number(proxy.port)
+		+ "?server=" + server
+		+ ((proxy.type != Type::Web)
+			? "&port=" + QString::number(proxy.port) : "")
 		+ ((proxy.type == Type::Socks5 && !proxy.user.isEmpty())
 			? "&user=" + qthelp::url_encode(proxy.user) : "")
 		+ ((proxy.type == Type::Socks5 && !proxy.password.isEmpty())
 			? "&pass=" + qthelp::url_encode(proxy.password) : "")
-		+ ((proxy.type == Type::Mtproto && !proxy.password.isEmpty())
-			? "&secret=" + proxy.password : "");
+		+ (((proxy.type == Type::Mtproto || proxy.type == Type::Web)
+				&& !proxy.password.isEmpty())
+			? "&secret=" + ((proxy.type == Type::Web)
+				? MTP::EncodeWebProxyLinkSecret(proxy)
+				: proxy.password) : "");
 }
 
 [[nodiscard]] QString ProxyDataToLocalLink(const ProxyData &proxy) {
@@ -293,8 +317,8 @@ void ShareProxy(
 					box,
 					nullptr,
 					qrLink,
-					rpl::single(QString()));
-				box->setTitle(tr::lng_proxy_edit_share_qr_box_title());
+					rpl::single(QString()),
+					tr::lng_proxy_edit_share_qr_box_title());
 			}));
 		} else {
 			ShowProxyQrBox(show, qrLink);
@@ -323,13 +347,26 @@ void ShareProxy(
 		const QMap<QString, QString> &fields) {
 	auto proxy = ProxyData();
 	proxy.type = type;
-	proxy.host = fields.value(u"server"_q);
-	proxy.port = fields.value(u"port"_q).toUInt();
+	const auto web = (type == ProxyData::Type::Web);
+	const auto server = fields.value(u"server"_q);
+	proxy.port = web ? 443 : fields.value(u"port"_q).toUInt();
+	if (web) {
+		proxy.setWebAddress(
+			server.isEmpty() ? fields.value(u"host"_q) : server);
+	} else {
+		proxy.host = server;
+	}
 	if (type == ProxyData::Type::Socks5) {
 		proxy.user = fields.value(u"user"_q);
 		proxy.password = fields.value(u"pass"_q);
-	} else if (type == ProxyData::Type::Mtproto) {
+	} else if (type == ProxyData::Type::Mtproto || web) {
 		proxy.password = fields.value(u"secret"_q);
+		proxy.password.replace('+', '-').replace('/', '_');
+		if (web) {
+			proxy.password = MTP::DecodeWebProxyLinkSecret(
+				proxy.password,
+				!proxy.webBasePath().isEmpty());
+		}
 	}
 	return proxy;
 };
@@ -338,8 +375,10 @@ void ShareProxy(
 	const auto protocol = u"tg://"_q;
 	const auto proxyString = u"proxy"_q;
 	const auto socksString = u"socks"_q;
+	const auto webproxyString = u"webproxy"_q;
 	if (!local.startsWith(protocol + proxyString, Qt::CaseInsensitive)
-		&& !local.startsWith(protocol + socksString, Qt::CaseInsensitive)) {
+		&& !local.startsWith(protocol + socksString, Qt::CaseInsensitive)
+		&& !local.startsWith(protocol + webproxyString, Qt::CaseInsensitive)) {
 		return ProxyData();
 	}
 	const auto command = base::StringViewMid(local, protocol.size(), 8192);
@@ -348,23 +387,22 @@ void ShareProxy(
 	for (const auto &[expression, _] : Core::LocalUrlHandlers()) {
 		const auto midExpression = base::StringViewMid(expression, 1);
 		const auto isSocks = midExpression.startsWith(socksString);
-		if (!midExpression.startsWith(proxyString) && !isSocks) {
+		const auto isWeb = midExpression.startsWith(webproxyString);
+		if (!midExpression.startsWith(proxyString) && !isSocks && !isWeb) {
 			continue;
 		}
 		const auto match = regex_match(expression, command, options);
 		if (!match) {
 			continue;
 		}
-		const auto type = isSocks
+		const auto type = isWeb
+			? ProxyData::Type::Web
+			: isSocks
 			? ProxyData::Type::Socks5
 			: ProxyData::Type::Mtproto;
 		auto fields = url_parse_params(
 			match->captured(1),
 			qthelp::UrlParamNameTransform::ToLower);
-		if (type == ProxyData::Type::Mtproto) {
-			auto &secret = fields[u"secret"_q];
-			secret.replace('+', '-').replace('/', '_');
-		}
 		return ProxyDataFromFields(type, fields);
 	}
 	return ProxyData();
@@ -388,6 +426,7 @@ void AddProxyFromClipboard(
 		std::shared_ptr<Ui::Show> show) {
 	const auto proxyString = u"proxy"_q;
 	const auto socksString = u"socks"_q;
+	const auto webproxyString = u"webproxy"_q;
 	const auto protocol = u"tg://"_q;
 
 	const auto maybeUrls = ExtractLinkCandidates(
@@ -405,7 +444,10 @@ void AddProxyFromClipboard(
 	const auto proceedUrl = [=](const QString &local) {
 		const auto isProxyLink
 			= local.startsWith(protocol + proxyString, Qt::CaseInsensitive)
-			|| local.startsWith(protocol + socksString, Qt::CaseInsensitive);
+			|| local.startsWith(protocol + socksString, Qt::CaseInsensitive)
+			|| local.startsWith(
+				protocol + webproxyString,
+				Qt::CaseInsensitive);
 		if (!isProxyLink) {
 			return Result::Failed;
 		}
@@ -481,6 +523,9 @@ HostInput::HostInput(
 	rpl::producer<QString> placeholder,
 	const QString &val)
 : MaskedInputField(parent, st, std::move(placeholder), val) {
+	setInputMethodHints(Qt::ImhUrlCharactersOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 }
 
 void HostInput::correctValue(
@@ -524,6 +569,10 @@ Base64UrlInput::Base64UrlInput(
 	rpl::producer<QString> placeholder,
 	const QString &val)
 : MaskedInputField(parent, st, std::move(placeholder), val) {
+	setInputMethodHints(Qt::ImhLatinOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText
+		| Qt::ImhSensitiveData);
 	static const auto RegExp = QRegularExpression("^[a-zA-Z0-9_\\-]+$");
 	if (!RegExp.match(val).hasMatch()) {
 		setText(QString());
@@ -561,39 +610,59 @@ public:
 	ProxyRow(QWidget *parent, View &&view);
 
 	void updateFields(View &&view);
+	void setChosen(bool selecting, bool chosen, anim::type animated);
+	[[nodiscard]] bool deleted() const;
 
+	rpl::producer<> chooseClicks() const;
 	rpl::producer<> deleteClicks() const;
 	rpl::producer<> restoreClicks() const;
 	rpl::producer<> editClicks() const;
 	rpl::producer<> shareClicks() const;
 	rpl::producer<> showQrClicks() const;
+	rpl::producer<> openBrowserClicks() const;
 
 protected:
 	int resizeGetHeight(int newWidth) override;
 
 	void paintEvent(QPaintEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 private:
+	using AddAction = Fn<void(
+		const QString &text,
+		Fn<void()> callback,
+		const style::icon *icon)>;
+
 	void setupControls(View &&view);
 	int countAvailableWidth() const;
 	void radialAnimationCallback();
 	void paintCheck(Painter &p);
+	void paintRadio(Painter &p);
+	void paintChosen(Painter &p);
+	void paintMenuToggle(Painter &p);
 	void showMenu();
+	void fillMenu(const AddAction &addAction);
 
 	View _view;
 
 	Ui::Text::String _title;
 	object_ptr<Ui::IconButton> _menuToggle;
+	rpl::event_stream<> _chooseClicks;
 	rpl::event_stream<> _deleteClicks;
 	rpl::event_stream<> _restoreClicks;
 	rpl::event_stream<> _editClicks;
 	rpl::event_stream<> _shareClicks;
 	rpl::event_stream<> _showQrClicks;
+	rpl::event_stream<> _openBrowserClicks;
 	base::unique_qptr<Ui::DropdownMenu> _menu;
+	base::unique_qptr<Ui::PopupMenu> _contextMenu;
 
 	bool _set = false;
 	Ui::Animations::Simple _toggled;
 	Ui::Animations::Simple _setAnimation;
+	bool _selecting = false;
+	Ui::Animations::Simple _selectingAnimation;
+	Ui::RoundCheckbox _check;
 	std::unique_ptr<Ui::InfiniteRadialAnimation> _progress;
 	std::unique_ptr<Ui::InfiniteRadialAnimation> _checking;
 
@@ -625,14 +694,26 @@ private:
 	void applyView(View &&view);
 	void setupButtons(int id, not_null<ProxyRow*> button);
 	int rowHeight() const;
-	void refreshProxyForCalls();
 	void refreshProxyRotation();
+	void refreshButtons();
+	void refreshSelection();
+	void toggleChosen(int id);
+	void chooseRange(int fromId, int tillId, bool chosen);
+	void handleRowEvent(int id, not_null<QEvent*> e);
+	void rowClicked(int id);
+	void updateDragSelection(QPoint globalPosition);
+	void finishPress();
+	void cancelPress();
+	[[nodiscard]] int rowIdAt(QPoint globalPosition) const;
+	[[nodiscard]] int dragScrollDelta(QPoint globalPosition) const;
+	void clearChosen();
+	void deleteChosen();
+	void shareChosen();
 
 	not_null<ProxiesBoxController*> _controller;
 	Core::SettingsProxy &_settings;
 	QPointer<Ui::Checkbox> _tryIPv6;
 	std::shared_ptr<Ui::RadioenumGroup<ProxyData::Settings>> _proxySettings;
-	QPointer<Ui::SlideWrap<Ui::Checkbox>> _proxyForCalls;
 	QPointer<Ui::SlideWrap<Ui::Checkbox>> _proxyRotation;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _proxyRotationOptions;
 	QPointer<Ui::SettingsSlider> _proxyRotationTimeout;
@@ -640,9 +721,22 @@ private:
 	base::unique_qptr<Ui::RpWidget> _noRows;
 	object_ptr<Ui::VerticalLayout> _initialWrap;
 	QPointer<Ui::VerticalLayout> _wrap;
-	int _currentProxySupportsCallsId = 0;
 
 	base::flat_map<int, base::unique_qptr<ProxyRow>> _rows;
+	struct Press {
+		int id = 0;
+		bool selection = false;
+		bool chosen = false;
+		bool dragged = false;
+		bool held = true;
+		base::flat_set<int> initial;
+	};
+
+	base::flat_set<int> _chosen;
+	std::optional<Press> _press;
+	int _anchorId = 0;
+	bool _selecting = false;
+	QPointer<Ui::RpWidget> _inner;
 
 	QPointer<Ui::RpWidget> _addProxyButton;
 	QPointer<Ui::RpWidget> _shareListButton;
@@ -663,7 +757,11 @@ private:
 
 	void prepare() override;
 	void setInnerFocus() override {
-		_host->setFocusFast();
+		if (_type->current() == Type::Web) {
+			_webHost->setFocusFast();
+		} else {
+			_host->setFocusFast();
+		}
 	}
 
 	void refreshButtons();
@@ -673,6 +771,7 @@ private:
 	void setupControls(const ProxyData &data);
 	void setupTypes();
 	void setupSocketAddress(const ProxyData &data);
+	void setupWebAddress(const ProxyData &data);
 	void setupCredentials(const ProxyData &data);
 	void setupMtprotoCredentials(const ProxyData &data);
 
@@ -694,7 +793,10 @@ private:
 	QPointer<Ui::InputField> _user;
 	QPointer<Ui::PasswordInput> _password;
 	QPointer<Base64UrlInput> _secret;
+	QPointer<Ui::InputField> _webHost;
 
+	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _socketAddress;
+	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _webAddress;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _credentials;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _mtprotoCredentials;
 
@@ -702,8 +804,39 @@ private:
 
 ProxyRow::ProxyRow(QWidget *parent, View &&view)
 : RippleButton(parent, st::proxyRowRipple)
-, _menuToggle(this, st::topBarMenuToggle) {
+, _menuToggle(this, st::topBarMenuToggle)
+, _check(st::proxyRowCheck, [=] { update(); }) {
 	setupControls(std::move(view));
+}
+
+void ProxyRow::setChosen(bool selecting, bool chosen, anim::type animated) {
+	_check.setChecked(chosen, animated);
+	if (_selecting != selecting) {
+		_selecting = selecting;
+		if (_selecting) {
+			_menuToggle->hide();
+		}
+		_selectingAnimation.start(
+			[=] { update(); },
+			_selecting ? 0. : 1.,
+			_selecting ? 1. : 0.,
+			st::defaultRadio.duration);
+		_selectingAnimation.setFinishedCallback([=] {
+			_menuToggle->setVisible(!_selecting);
+		});
+		if (animated == anim::type::instant) {
+			_selectingAnimation.stop();
+			_menuToggle->setVisible(!_selecting);
+		}
+	}
+}
+
+bool ProxyRow::deleted() const {
+	return _view.deleted;
+}
+
+rpl::producer<> ProxyRow::chooseClicks() const {
+	return _chooseClicks.events();
 }
 
 rpl::producer<> ProxyRow::deleteClicks() const {
@@ -726,6 +859,10 @@ rpl::producer<> ProxyRow::showQrClicks() const {
 	return _showQrClicks.events();
 }
 
+rpl::producer<> ProxyRow::openBrowserClicks() const {
+	return _openBrowserClicks.events();
+}
+
 void ProxyRow::setupControls(View &&view) {
 	updateFields(std::move(view));
 	_toggled.stop();
@@ -735,7 +872,13 @@ void ProxyRow::setupControls(View &&view) {
 }
 
 int ProxyRow::countAvailableWidth() const {
-	return width() - _skipLeft - _skipRight;
+	const auto selecting = _selectingAnimation.value(_selecting ? 1. : 0.);
+	return width()
+		- _skipLeft
+		- anim::interpolate(
+			_skipRight,
+			st::proxyRowSelectingSkipRight,
+			selecting);
 }
 
 void ProxyRow::updateFields(View &&view) {
@@ -747,7 +890,9 @@ void ProxyRow::updateFields(View &&view) {
 			st::defaultRadio.duration);
 	}
 	_view = std::move(view);
-	const auto endpoint = _view.host + ':' + QString::number(_view.port);
+	const auto endpoint = _view.web
+		? _view.host
+		: _view.host + ':' + QString::number(_view.port);
 	_title.setMarkedText(
 		st::proxyRowTitleStyle,
 		TextWithEntities()
@@ -832,6 +977,7 @@ void ProxyRow::paintEvent(QPaintEvent *e) {
 	}
 
 	paintCheck(p);
+	paintMenuToggle(p);
 
 	p.setPen(st::proxyRowTitleFg);
 	p.setFont(st::semiboldFont);
@@ -845,6 +991,8 @@ void ProxyRow::paintEvent(QPaintEvent *e) {
 			return st::proxyRowStatusFgOnline;
 		case State::Unavailable:
 			return st::proxyRowStatusFgOffline;
+		case State::WaitingForBrowser:
+			return st::proxyRowStatusFg;
 		case State::Available:
 			return st::proxyRowStatusFgAvailable;
 		default:
@@ -860,12 +1008,16 @@ void ProxyRow::paintEvent(QPaintEvent *e) {
 				QString::number(_view.ping));
 		case State::Checking:
 			return tr::lng_proxy_checking(tr::now);
+		case State::NotTested:
+			return tr::lng_proxy_not_tested(tr::now);
 		case State::Connecting:
 			return tr::lng_proxy_connecting(tr::now);
 		case State::Online:
 			return tr::lng_proxy_online(tr::now);
 		case State::Unavailable:
 			return tr::lng_proxy_unavailable(tr::now);
+		case State::WaitingForBrowser:
+			return tr::lng_proxy_web_waiting(tr::now);
 		}
 		Unexpected("State in ProxyRow::paintEvent.");
 	}();
@@ -890,6 +1042,58 @@ void ProxyRow::paintEvent(QPaintEvent *e) {
 }
 
 void ProxyRow::paintCheck(Painter &p) {
+	const auto selecting = _selectingAnimation.value(_selecting ? 1. : 0.);
+	const auto opacity = p.opacity();
+	if (selecting < 1.) {
+		p.setOpacity(opacity * (1. - selecting));
+		paintRadio(p);
+	}
+	if (selecting > 0.) {
+		p.setOpacity(opacity * selecting);
+		paintChosen(p);
+	}
+	p.setOpacity(opacity);
+}
+
+void ProxyRow::paintChosen(Painter &p) {
+	const auto &radio = st::defaultRadio;
+	const auto size = st::proxyRowCheck.size;
+	const auto left = st::proxyRowPadding.left()
+		+ (radio.diameter - size) / 2;
+	const auto top = (height() - radio.diameter - radio.thickness) / 2
+		+ (radio.diameter - size) / 2;
+	const auto half = radio.thickness / 2.;
+
+	PainterHighQualityEnabler hq(p);
+	auto pen = QPen(radio.untoggledFg);
+	pen.setWidth(radio.thickness);
+	p.setPen(pen);
+	p.setBrush(Qt::NoBrush);
+	p.drawEllipse(style::rtlrect(
+		QRectF(Rect(left, top, Size(size))) - Margins(half),
+		width()));
+	_check.paint(p, left, top, width());
+}
+
+void ProxyRow::paintMenuToggle(Painter &p) {
+	if (!_menuToggle->isHidden()) {
+		return;
+	}
+	const auto selecting = _selectingAnimation.value(_selecting ? 1. : 0.);
+	if (selecting >= 1.) {
+		return;
+	}
+	const auto &st = st::topBarMenuToggle;
+	const auto opacity = p.opacity();
+	p.setOpacity(opacity * (1. - selecting));
+	st.icon.paint(
+		p,
+		myrtlrect(_menuToggle->geometry()).topLeft() + st.iconPosition,
+		width());
+	p.setOpacity(opacity);
+}
+
+void ProxyRow::paintRadio(Painter &p) {
 	const auto loading = _progress
 		? _progress->computeState()
 		: Ui::RadialState{ 0., 0, arc::kFullLength };
@@ -957,32 +1161,12 @@ void ProxyRow::showMenu() {
 		}
 	});
 	_menuToggle->installEventFilter(_menu);
-	const auto addAction = [&](
+	fillMenu([&](
 			const QString &text,
 			Fn<void()> callback,
 			const style::icon *icon) {
-		return _menu->addAction(text, std::move(callback), icon);
-	};
-	addAction(tr::lng_proxy_menu_edit(tr::now), [=] {
-		_editClicks.fire({});
-	}, &st::menuIconEdit);
-	if (_view.supportsShare) {
-		addAction(tr::lng_proxy_edit_share(tr::now), [=] {
-			_shareClicks.fire({});
-		}, &st::menuIconShare);
-		addAction(tr::lng_group_invite_context_qr(tr::now), [=] {
-			_showQrClicks.fire({});
-		}, &st::menuIconQrCode);
-	}
-	if (_view.deleted) {
-		addAction(tr::lng_proxy_menu_restore(tr::now), [=] {
-			_restoreClicks.fire({});
-		}, &st::menuIconRestore);
-	} else {
-		addAction(tr::lng_proxy_menu_delete(tr::now), [=] {
-			_deleteClicks.fire({});
-		}, &st::menuIconDelete);
-	}
+		_menu->addAction(text, std::move(callback), icon);
+	});
 	const auto parentTopLeft = window()->mapToGlobal(QPoint());
 	const auto buttonTopLeft = _menuToggle->mapToGlobal(QPoint());
 	const auto parent = QRect(parentTopLeft, window()->size());
@@ -1014,6 +1198,56 @@ void ProxyRow::showMenu() {
 	}
 }
 
+void ProxyRow::fillMenu(const AddAction &addAction) {
+	addAction(tr::lng_proxy_menu_edit(tr::now), [=] {
+		_editClicks.fire({});
+	}, &st::menuIconEdit);
+	if (!_view.deleted && !_check.checked()) {
+		addAction(tr::lng_context_select_msg(tr::now), [=] {
+			_chooseClicks.fire({});
+		}, &st::menuIconSelect);
+	}
+	if (_view.canOpenBrowser) {
+		addAction(tr::lng_proxy_web_open(tr::now), [=] {
+			_openBrowserClicks.fire({});
+		}, &st::menuIconLink);
+	}
+	if (_view.supportsShare) {
+		addAction(tr::lng_proxy_edit_share(tr::now), [=] {
+			_shareClicks.fire({});
+		}, &st::menuIconShare);
+		addAction(tr::lng_group_invite_context_qr(tr::now), [=] {
+			_showQrClicks.fire({});
+		}, &st::menuIconQrCode);
+	}
+	if (_view.deleted) {
+		addAction(tr::lng_proxy_menu_restore(tr::now), [=] {
+			_restoreClicks.fire({});
+		}, &st::menuIconRestore);
+	} else {
+		addAction(tr::lng_proxy_menu_delete(tr::now), [=] {
+			_deleteClicks.fire({});
+		}, &st::menuIconDelete);
+	}
+}
+
+void ProxyRow::contextMenuEvent(QContextMenuEvent *e) {
+	e->accept();
+	if (_menu || _selecting) {
+		return;
+	}
+	_contextMenu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::popupMenuWithIcons);
+	fillMenu([&](
+			const QString &text,
+			Fn<void()> callback,
+			const style::icon *icon) {
+		_contextMenu->addAction(text, std::move(callback), icon);
+	});
+	_contextMenu->popup(e->globalPos());
+}
+
 ProxiesBox::ProxiesBox(
 	QWidget*,
 	not_null<ProxiesBoxController*> controller,
@@ -1030,9 +1264,15 @@ ProxiesBox::ProxiesBox(
 }
 
 void ProxiesBox::keyPressEvent(QKeyEvent *e) {
-	if (e->key() == Qt::Key_Copy
+	if (e->key() == Qt::Key_Escape && _selecting) {
+		clearChosen();
+	} else if (e->key() == Qt::Key_Copy
 		|| (e->key() == Qt::Key_C && e->modifiers() == Qt::ControlModifier)) {
-		_controller->shareItems();
+		if (_selecting) {
+			shareChosen();
+		} else {
+			_controller->shareItems();
+		}
 	} else if (e->key() == Qt::Key_Paste
 		|| (e->key() == Qt::Key_V && e->modifiers() == Qt::ControlModifier)) {
 		AddProxyFromClipboard(_controller, uiShow());
@@ -1043,11 +1283,7 @@ void ProxiesBox::keyPressEvent(QKeyEvent *e) {
 
 void ProxiesBox::prepare() {
 	setTitle(tr::lng_proxy_settings());
-
-	_addProxyButton = addButton(tr::lng_proxy_add(), [=] { addNewProxy(); });
-	addButton(tr::lng_close(), [=] { closeBox(); });
-
-	setupTopButton();
+	refreshButtons();
 	setupContent();
 }
 
@@ -1069,14 +1305,13 @@ void ProxiesBox::showFinished() {
 
 void ProxiesBox::setupTopButton() {
 	const auto top = addTopButton(st::infoTopBarMenu);
-	const auto menu
-		= top->lifetime().make_state<base::unique_qptr<Ui::PopupMenu>>();
+	const auto state = top->lifetime().make_state<TopButtonMenuState>();
 
 	top->setClickedCallback([=] {
-		*menu = base::make_unique_q<Ui::PopupMenu>(
+		state->menu = base::make_unique_q<Ui::PopupMenu>(
 			top,
 			st::popupMenuWithIcons);
-		const auto raw = menu->get();
+		const auto raw = state->menu.get();
 		const auto addAction = Ui::Menu::CreateAddActionCallback(raw);
 		addAction({
 			.text = tr::lng_proxy_add_from_clipboard(tr::now),
@@ -1094,8 +1329,8 @@ void ProxiesBox::setupTopButton() {
 		raw->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
 		top->setForceRippled(true);
 		raw->setDestroyedCallback([=] {
-			if (const auto strong = top.data()) {
-				strong->setForceRippled(false);
+			if (!state->closing) {
+				top->setForceRippled(false);
 			}
 		});
 		raw->popup(
@@ -1107,6 +1342,12 @@ void ProxiesBox::setupTopButton() {
 
 void ProxiesBox::setupContent() {
 	const auto inner = setInnerWidget(object_ptr<Ui::VerticalLayout>(this));
+	_inner = inner;
+	scrolls() | rpl::on_next([=] {
+		if (_press && _press->held) {
+			updateDragSelection(QCursor::pos());
+		}
+	}, inner->lifetime());
 
 	_tryIPv6 = inner->add(
 		object_ptr<Ui::Checkbox>(
@@ -1138,23 +1379,6 @@ void ProxiesBox::setupContent() {
 			ProxyData::Settings::Enabled,
 			tr::lng_proxy_use_custom(tr::now)),
 		st::proxyUsePadding);
-	_proxyForCalls = inner->add(
-		object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
-			inner,
-			object_ptr<Ui::Checkbox>(
-				inner,
-				tr::lng_proxy_use_for_calls(tr::now),
-				_settings.useProxyForCalls()),
-			style::margins(
-				0,
-				st::proxyUsePadding.top(),
-				0,
-				st::proxyUsePadding.bottom())),
-		style::margins(
-			st::proxyTryIPv6Padding.left(),
-			0,
-			st::proxyTryIPv6Padding.right(),
-			st::proxyTryIPv6Padding.top()));
 	_proxyRotation = inner->add(
 		object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
 			inner,
@@ -1217,7 +1441,6 @@ void ProxiesBox::setupContent() {
 			_proxySettings->setValue(_settings.settings());
 			addNewProxy();
 		}
-		refreshProxyForCalls();
 		refreshProxyRotation();
 	});
 	_tryIPv6->checkedChanges(
@@ -1228,14 +1451,9 @@ void ProxiesBox::setupContent() {
 	_controller->proxySettingsValue(
 	) | rpl::on_next([=](ProxyData::Settings value) {
 		_proxySettings->setValue(value);
-		refreshProxyForCalls();
 		refreshProxyRotation();
 	}, inner->lifetime());
 
-	_proxyForCalls->entity()->checkedChanges(
-	) | rpl::on_next([=](bool checked) {
-		_controller->setProxyForCalls(checked);
-	}, _proxyForCalls->lifetime());
 	_proxyRotation->entity()->checkedChanges(
 	) | rpl::on_next([=](bool checked) {
 		_controller->setProxyRotationEnabled(checked);
@@ -1250,9 +1468,7 @@ void ProxiesBox::setupContent() {
 	if (_rows.empty()) {
 		createNoRowsLabel();
 	}
-	refreshProxyForCalls();
 	refreshProxyRotation();
-	_proxyForCalls->finishAnimating();
 	_proxyRotation->finishAnimating();
 	_proxyRotationOptions->finishAnimating();
 
@@ -1289,16 +1505,6 @@ void ProxiesBox::setupContent() {
 	}, inner->lifetime());
 }
 
-void ProxiesBox::refreshProxyForCalls() {
-	if (!_proxyForCalls) {
-		return;
-	}
-	_proxyForCalls->toggle(
-		(_proxySettings->current() == ProxyData::Settings::Enabled
-			&& _currentProxySupportsCallsId != 0),
-		anim::type::normal);
-}
-
 void ProxiesBox::refreshProxyRotation() {
 	if (!_proxyRotation || !_proxyRotationOptions) {
 		return;
@@ -1326,15 +1532,22 @@ void ProxiesBox::addNewProxy() {
 }
 
 void ProxiesBox::applyView(View &&view) {
-	if (view.selected) {
-		_currentProxySupportsCallsId = view.supportsCalls ? view.id : 0;
-	} else if (view.id == _currentProxySupportsCallsId) {
-		_currentProxySupportsCallsId = 0;
-	}
-	refreshProxyForCalls();
-
 	const auto id = view.id;
 	const auto i = _rows.find(id);
+	if (view.deleted || view.host.isEmpty()) {
+		if (_anchorId == id) {
+			_anchorId = 0;
+		}
+		if (_press) {
+			_press->initial.remove(id);
+			if (_press->id == id && view.host.isEmpty()) {
+				cancelPress();
+			}
+		}
+		if (_chosen.remove(id)) {
+			refreshSelection();
+		}
+	}
 	if (i == _rows.end()) {
 		const auto wrap = _wrap
 			? _wrap.data()
@@ -1346,6 +1559,7 @@ void ProxiesBox::applyView(View &&view) {
 				wrap,
 				std::move(view))));
 		setupButtons(id, i->second.get());
+		i->second->setChosen(_selecting, false, anim::type::instant);
 		if (_noRows) {
 			_noRows.reset();
 		}
@@ -1403,10 +1617,233 @@ void ProxiesBox::setupButtons(int id, not_null<ProxyRow*> button) {
 		_controller->shareItem(id, qr);
 	}, button->lifetime());
 
+	button->openBrowserClicks(
+	) | rpl::on_next([=] {
+		_controller->openBrowser(id);
+	}, button->lifetime());
+
+	button->chooseClicks(
+	) | rpl::on_next([=] {
+		toggleChosen(id);
+	}, button->lifetime());
+
+	button->events(
+	) | rpl::on_next([=](not_null<QEvent*> e) {
+		handleRowEvent(id, e);
+	}, button->lifetime());
+
 	button->clicks(
 	) | rpl::on_next([=] {
-		_controller->applyItem(id);
+		rowClicked(id);
 	}, button->lifetime());
+
+	Ui::SetupSelectingScroll(button, [=](int pixels) {
+		scrollToY(scrollTop() + pixels);
+	}, [=](QPoint globalPosition) {
+		return dragScrollDelta(globalPosition);
+	});
+}
+
+void ProxiesBox::handleRowEvent(int id, not_null<QEvent*> e) {
+	const auto type = e->type();
+	if (type != QEvent::MouseButtonPress
+		&& type != QEvent::MouseMove
+		&& type != QEvent::MouseButtonRelease) {
+		return;
+	}
+	const auto mouse = static_cast<QMouseEvent*>(e.get());
+	if (type == QEvent::MouseButtonPress) {
+		if (mouse->button() == Qt::LeftButton) {
+			_press = Press{
+				.id = id,
+				.selection = _selecting
+					|| base::IsCtrlPressed()
+					|| base::IsShiftPressed(),
+				.chosen = !_chosen.contains(id),
+				.initial = _chosen,
+			};
+		}
+	} else if (type == QEvent::MouseMove) {
+		if (!(mouse->buttons() & Qt::LeftButton)) {
+			finishPress();
+		} else {
+			updateDragSelection(mouse->globalPosition().toPoint());
+		}
+	} else if (mouse->button() == Qt::LeftButton) {
+		finishPress();
+	}
+}
+
+void ProxiesBox::rowClicked(int id) {
+	const auto press = base::take(_press);
+	const auto own = press && (press->id == id);
+	if (own && press->dragged) {
+		return;
+	}
+	const auto shift = base::IsShiftPressed();
+	const auto selection = own
+		? press->selection
+		: (_selecting || base::IsCtrlPressed() || shift);
+	if (!selection) {
+		_controller->applyItem(id);
+	} else if (shift && _anchorId && _anchorId != id) {
+		chooseRange(_anchorId, id, true);
+		refreshSelection();
+	} else {
+		toggleChosen(id);
+	}
+}
+
+void ProxiesBox::updateDragSelection(QPoint globalPosition) {
+	if (!_press || !_press->held || !_press->selection) {
+		return;
+	}
+	const auto id = rowIdAt(globalPosition);
+	if (!id || (!_press->dragged && id == _press->id)) {
+		return;
+	}
+	_press->dragged = true;
+	_anchorId = _press->id;
+	_chosen = _press->initial;
+	chooseRange(_press->id, id, _press->chosen);
+	refreshSelection();
+}
+
+void ProxiesBox::finishPress() {
+	if (_press && _press->held) {
+		_press->held = false;
+		if (_press->dragged) {
+			refreshSelection();
+		}
+	}
+}
+
+void ProxiesBox::cancelPress() {
+	if (_press) {
+		_press->held = false;
+		_press->dragged = true;
+	}
+}
+
+int ProxiesBox::rowIdAt(QPoint globalPosition) const {
+	if (!_wrap) {
+		return 0;
+	}
+	const auto y = _wrap->mapFromGlobal(globalPosition).y();
+	auto result = 0;
+	auto distance = std::numeric_limits<int>::max();
+	for (const auto &[id, row] : _rows) {
+		const auto top = row->y();
+		const auto bottom = top + row->height();
+		const auto rowDistance = (y < top)
+			? (top - y)
+			: (y >= bottom)
+			? (y - bottom + 1)
+			: 0;
+		if (rowDistance < distance) {
+			distance = rowDistance;
+			result = id;
+		}
+	}
+	return result;
+}
+
+int ProxiesBox::dragScrollDelta(QPoint globalPosition) const {
+	if (!_press || !_press->held || !_press->selection || !_inner) {
+		return 0;
+	}
+	return Ui::SelectingScrollDelta(
+		_inner->visibleRegion().boundingRect(),
+		_inner->mapFromGlobal(globalPosition).y());
+}
+
+void ProxiesBox::chooseRange(int fromId, int tillId, bool chosen) {
+	const auto from = _rows.find(fromId);
+	const auto till = _rows.find(tillId);
+	if (from == end(_rows) || till == end(_rows)) {
+		return;
+	}
+	const auto top = std::min(from->second->y(), till->second->y());
+	const auto bottom = std::max(from->second->y(), till->second->y());
+	for (const auto &[id, row] : _rows) {
+		if (row->y() < top || row->y() > bottom) {
+			continue;
+		} else if (!chosen) {
+			_chosen.remove(id);
+		} else if (!row->deleted()) {
+			_chosen.emplace(id);
+		}
+	}
+}
+
+void ProxiesBox::refreshButtons() {
+	clearButtons();
+	setupTopButton();
+	if (_selecting) {
+		addLeftButton(
+			tr::lng_selected_delete(),
+			[=] { deleteChosen(); },
+			st::attentionBoxButton);
+		addButton(tr::lng_proxy_edit_share(), [=] { shareChosen(); });
+		addButton(tr::lng_selected_clear(), [=] { clearChosen(); });
+	} else {
+		_addProxyButton = addButton(
+			tr::lng_proxy_add(),
+			[=] { addNewProxy(); });
+		addButton(tr::lng_close(), [=] { closeBox(); });
+	}
+}
+
+void ProxiesBox::refreshSelection() {
+	const auto selecting = !_chosen.empty()
+		|| (_press && _press->held && _press->dragged);
+	if (!selecting) {
+		_anchorId = 0;
+	}
+	for (const auto &[id, row] : _rows) {
+		row->setChosen(selecting, _chosen.contains(id), anim::type::normal);
+	}
+	if (selecting) {
+		setTitle(tr::lng_proxy_selected(
+			tr::now,
+			lt_count,
+			int(_chosen.size())));
+	} else {
+		setTitle(tr::lng_proxy_settings());
+	}
+	if (_selecting != selecting) {
+		_selecting = selecting;
+		refreshButtons();
+	}
+}
+
+void ProxiesBox::toggleChosen(int id) {
+	const auto i = _rows.find(id);
+	if (i == _rows.end() || i->second->deleted()) {
+		return;
+	} else if (!_chosen.remove(id)) {
+		_chosen.emplace(id);
+	}
+	_anchorId = id;
+	refreshSelection();
+}
+
+void ProxiesBox::clearChosen() {
+	cancelPress();
+	_chosen.clear();
+	refreshSelection();
+}
+
+void ProxiesBox::deleteChosen() {
+	cancelPress();
+	_controller->deleteItems(base::take(_chosen));
+	refreshSelection();
+}
+
+void ProxiesBox::shareChosen() {
+	cancelPress();
+	_controller->shareItems(base::take(_chosen));
+	refreshSelection();
 }
 
 ProxyBox::ProxyBox(
@@ -1451,7 +1888,10 @@ void ProxyBox::prepare() {
 	}, _port->lifetime());
 
 	const auto submit = [=] {
-		if (_host->hasFocus()
+		if (_webHost->hasFocus()
+			&& !_webHost->getLastText().trimmed().isEmpty()) {
+			_secret->setFocus();
+		} else if (_host->hasFocus()
 			&& !_host->getLastText().trimmed().isEmpty()) {
 			_port->setFocus();
 		} else if (_port->hasFocus()
@@ -1471,6 +1911,8 @@ void ProxyBox::prepare() {
 	connect(_port.data(), &Ui::MaskedInputField::submitted, submit);
 	_user->submits(
 	) | rpl::on_next(submit, _user->lifetime());
+	_webHost->submits(
+	) | rpl::on_next(submit, _webHost->lifetime());
 	connect(_password.data(), &Ui::MaskedInputField::submitted, submit);
 	connect(_secret.data(), &Ui::MaskedInputField::submitted, submit);
 
@@ -1485,7 +1927,9 @@ void ProxyBox::refreshButtons() {
 
 	const auto type = _type->current();
 	if (_allowShare
-		&& (type == Type::Socks5 || type == Type::Mtproto)) {
+		&& (type == Type::Socks5
+			|| type == Type::Mtproto
+			|| type == Type::Web)) {
 		addLeftButton(tr::lng_proxy_share(), [=] { share(); });
 	}
 }
@@ -1506,25 +1950,41 @@ void ProxyBox::share() {
 ProxyData ProxyBox::collectData() {
 	auto result = ProxyData();
 	result.type = _type->current();
-	result.host = _host->getLastText().trimmed();
-	result.port = _port->getLastText().trimmed().toInt();
-	result.user = (result.type == Type::Mtproto)
+	const auto web = (result.type == Type::Web);
+	result.host = web
+		? QString()
+		: _host->getLastText().trimmed();
+	result.port = web
+		? 443
+		: _port->getLastText().trimmed().toInt();
+	result.user = (result.type == Type::Mtproto || web)
 		? QString()
 		: _user->getLastText();
-	result.password = (result.type == Type::Mtproto)
+	result.password = (result.type == Type::Mtproto || web)
 		? _secret->getLastText()
 		: _password->getLastText();
+	if (web) {
+		result.setWebAddress(_webHost->getLastText());
+	}
 	if (result.host.isEmpty()) {
-		_host->showError();
-	} else if (!result.port) {
+		if (web) {
+			_webHost->showError();
+		} else {
+			_host->showError();
+		}
+	} else if (!web && !result.port) {
 		_port->showError();
 	} else if ((result.type == Type::Http || result.type == Type::Socks5)
 		&& !result.password.isEmpty() && result.user.isEmpty()) {
 		_user->showError();
-	} else if (result.type == Type::Mtproto && !result.valid()) {
+	} else if ((result.type == Type::Mtproto || web) && !result.valid()) {
 		_secret->showError();
 	} else if (!result) {
-		_host->showError();
+		if (web) {
+			_webHost->showError();
+		} else {
+			_host->showError();
+		}
 	} else {
 		return result;
 	}
@@ -1536,6 +1996,7 @@ void ProxyBox::setupTypes() {
 		{ Type::Mtproto, u"MTPROTO"_q },
 		{ Type::Socks5, u"SOCKS5"_q },
 		{ Type::Http, u"HTTP"_q },
+		{ Type::Web, u"WEB"_q },
 	};
 	for (const auto &[type, label] : types) {
 		_content->add(
@@ -1546,22 +2007,33 @@ void ProxyBox::setupTypes() {
 				label),
 			st::proxyEditTypePadding);
 	}
+	auto warning = _type->value(
+	) | rpl::map([](Type type) {
+		return (type == Type::Web)
+			? tr::lng_proxy_web_warning(tr::now)
+			: tr::lng_proxy_sponsor_warning(tr::now);
+	});
 	_aboutSponsored = _content->add(object_ptr<Ui::SlideWrap<>>(
 		_content,
 		object_ptr<Ui::PaddingWrap<>>(
 			_content,
 			object_ptr<Ui::FlatLabel>(
 				_content,
-				tr::lng_proxy_sponsor_warning(tr::now),
+				std::move(warning),
 				st::boxDividerLabel),
 			st::proxyAboutSponsorPadding)));
 }
 
 void ProxyBox::setupSocketAddress(const ProxyData &data) {
-	addLabel(_content, tr::lng_proxy_address_label(tr::now));
-	const auto address = _content->add(
-		object_ptr<Ui::FixedHeightWidget>(
+	_socketAddress = _content->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
 			_content,
+			object_ptr<Ui::VerticalLayout>(_content)));
+	const auto content = _socketAddress->entity();
+	addLabel(content, tr::lng_proxy_address_label(tr::now));
+	const auto address = content->add(
+		object_ptr<Ui::FixedHeightWidget>(
+			content,
 			st::connectionHostInputField.heightMin),
 		st::proxyEditInputPadding);
 	_host = Ui::CreateChild<HostInput>(
@@ -1575,6 +2047,19 @@ void ProxyBox::setupSocketAddress(const ProxyData &data) {
 		tr::lng_connection_port_ph(),
 		data.port ? QString::number(data.port) : QString(),
 		65535);
+	{
+		// The field is at least as wide as its placeholder.
+		const auto &st = st::connectionPortInputField;
+		const auto placeholder = st.placeholderFont->width(
+			tr::lng_connection_port_ph(tr::now))
+			+ st.textMargins.left()
+			+ st.textMargins.right()
+			+ st.placeholderMargins.left()
+			+ st.placeholderMargins.right();
+		if (placeholder > _port->width()) {
+			_port->resize(placeholder, _port->height());
+		}
+	}
 	address->widthValue(
 	) | rpl::on_next([=](int width) {
 		_port->moveToRight(0, 0);
@@ -1583,6 +2068,25 @@ void ProxyBox::setupSocketAddress(const ProxyData &data) {
 			_host->height());
 		_host->moveToLeft(0, 0);
 	}, address->lifetime());
+}
+
+void ProxyBox::setupWebAddress(const ProxyData &data) {
+	_webAddress = _content->add(
+		object_ptr<Ui::SlideWrap<Ui::VerticalLayout>>(
+			_content,
+			object_ptr<Ui::VerticalLayout>(_content)));
+	const auto content = _webAddress->entity();
+	addLabel(content, tr::lng_proxy_web_server_label(tr::now));
+	_webHost = content->add(
+		object_ptr<Ui::InputField>(
+			content,
+			st::connectionUserInputField,
+			tr::lng_proxy_web_host_ph(),
+			(data.type == Type::Web) ? data.webAddress() : QString()),
+		st::proxyEditInputPadding);
+	_webHost->setInputMethodHints(Qt::ImhUrlCharactersOnly
+		| Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 }
 
 void ProxyBox::setupCredentials(const ProxyData &data) {
@@ -1599,13 +2103,17 @@ void ProxyBox::setupCredentials(const ProxyData &data) {
 			tr::lng_connection_user_ph(),
 			data.user),
 		st::proxyEditInputPadding);
+	_user->setInputMethodHints(Qt::ImhNoAutoUppercase
+		| Qt::ImhNoPredictiveText);
 
 	auto passwordWrap = object_ptr<Ui::RpWidget>(credentials);
 	_password = Ui::CreateChild<Ui::PasswordInput>(
 		passwordWrap.data(),
 		st::connectionPasswordInputField,
 		tr::lng_connection_password_ph(),
-		(data.type == Type::Mtproto) ? QString() : data.password);
+		(data.type == Type::Mtproto || data.type == Type::Web)
+			? QString()
+			: data.password);
 	_password->move(0, 0);
 	_password->heightValue(
 	) | rpl::on_next([=, wrap = passwordWrap.data()](int height) {
@@ -1631,7 +2139,9 @@ void ProxyBox::setupMtprotoCredentials(const ProxyData &data) {
 		secretWrap.data(),
 		st::connectionUserInputField,
 		tr::lng_connection_proxy_secret_ph(),
-		(data.type == Type::Mtproto) ? data.password : QString());
+		(data.type == Type::Mtproto || data.type == Type::Web)
+			? data.password
+			: QString());
 	_secret->move(0, 0);
 	_secret->heightValue(
 	) | rpl::on_next([=, wrap = secretWrap.data()](int height) {
@@ -1655,13 +2165,17 @@ void ProxyBox::setupControls(const ProxyData &data) {
 
 	setupTypes();
 	setupSocketAddress(data);
+	setupWebAddress(data);
 	setupCredentials(data);
 	setupMtprotoCredentials(data);
 
 	const auto handleType = [=](Type type) {
+		const auto web = (type == Type::Web);
 		const auto credentialsShown
 			= (type == Type::Http || type == Type::Socks5);
-		const auto mtprotoShown = (type == Type::Mtproto);
+		const auto mtprotoShown = (type == Type::Mtproto || web);
+		_socketAddress->toggle(!web, anim::type::instant);
+		_webAddress->toggle(web, anim::type::instant);
 		_credentials->toggle(credentialsShown, anim::type::instant);
 		_mtprotoCredentials->toggle(mtprotoShown, anim::type::instant);
 		_aboutSponsored->toggle(mtprotoShown, anim::type::instant);
@@ -1672,6 +2186,7 @@ void ProxyBox::setupControls(const ProxyData &data) {
 		_password->setFocusPolicy(credentialsPolicy);
 		_secret->setFocusPolicy(
 			mtprotoShown ? Qt::StrongFocus : Qt::NoFocus);
+		_webHost->setFocusPolicy(web ? Qt::StrongFocus : Qt::NoFocus);
 	};
 	_type->setChangedCallback([=](Type type) {
 		handleType(type);
@@ -1715,9 +2230,23 @@ ProxiesBoxController::ProxiesBoxController(not_null<Main::Account*> account)
 		}
 	}, _lifetime);
 
+	MTP::WebProxy::Transport::StateChanges(
+	) | rpl::on_next([=](const MTP::WebProxy::Transport::StateChange &change) {
+		const auto i = findByProxy(change.proxy);
+		if (i != end(_list)) {
+			updateView(*i);
+		}
+	}, _lifetime);
+
 	for (auto &item : _list) {
 		refreshChecker(item);
 	}
+}
+
+ProxyData ProxiesBoxController::ProxyFromLink(const QString &link) {
+	const auto trimmed = link.trimmed();
+	const auto converted = Core::TryConvertUrlToLocal(trimmed);
+	return ProxyDataFromLocalUrl(converted.isEmpty() ? trimmed : converted);
 }
 
 void ProxiesBoxController::ShowApplyConfirmation(
@@ -1744,7 +2273,9 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		"^https://",
 		QRegularExpression::CaseInsensitiveOption);
 	static const auto UrlEndRegExp = QRegularExpression("/$");
-	const auto displayed = "https://" + proxy.host + "/";
+	const auto displayed = "https://"
+		+ ((type == Type::Web) ? proxy.webAddress() : proxy.host)
+		+ "/";
 	const auto parsed = QUrl::fromUserInput(displayed);
 	const auto displayUrl = !UrlClickHandler::IsSuspicious(displayed)
 		? displayed
@@ -1764,18 +2295,18 @@ void ProxiesBoxController::ShowApplyConfirmation(
 			box->closeBox();
 		});
 
-		if (ProxyDataIsShareable(proxy)) {
+		if (ProxyDataIsShareable(proxy) && type != Type::Web) {
 			const auto account = controller
 				? &controller->session().account()
 				: &Core::App().activeAccount();
 			const auto top = box->addTopButton(st::boxTitleMenu);
-			const auto menu = top->lifetime().make_state<
-				base::unique_qptr<Ui::PopupMenu>>();
+			const auto state = top->lifetime().make_state<
+				TopButtonMenuState>();
 			top->setClickedCallback([=] {
-				*menu = base::make_unique_q<Ui::PopupMenu>(
+				state->menu = base::make_unique_q<Ui::PopupMenu>(
 					top,
 					st::popupMenuWithIcons);
-				const auto raw = menu->get();
+				const auto raw = state->menu.get();
 				const auto addAction = Ui::Menu::CreateAddActionCallback(raw);
 				addAction({
 					.text = tr::lng_proxy_edit_share(tr::now),
@@ -1794,8 +2325,8 @@ void ProxiesBoxController::ShowApplyConfirmation(
 				raw->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
 				top->setForceRippled(true);
 				raw->setDestroyedCallback([=] {
-					if (const auto strong = top.data()) {
-						strong->setForceRippled(false);
+					if (!state->closing) {
+						top->setForceRippled(false);
 					}
 				});
 				raw->popup(top->mapToGlobal(QPoint(
@@ -1844,15 +2375,17 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		if (!displayServer.isEmpty()) {
 			add(displayServer, tr::lng_proxy_box_server());
 		}
-		add(QString::number(proxy.port), tr::lng_proxy_box_port());
+		if (type != Type::Web) {
+			add(QString::number(proxy.port), tr::lng_proxy_box_port());
+		}
 		if (type == Type::Socks5) {
 			add(proxy.user, tr::lng_proxy_box_username());
 			add(proxy.password, tr::lng_proxy_box_password());
-		} else if (type == Type::Mtproto) {
+		} else if (type == Type::Mtproto || type == Type::Web) {
 			add(proxy.password, tr::lng_proxy_box_secret());
 		}
 
-		{
+		if (type != Type::Web) {
 			struct ProxyCheckStatusState {
 				Checker v4;
 				Checker v6;
@@ -1871,16 +2404,12 @@ void ProxiesBoxController::ShowApplyConfirmation(
 				st::defaultPopupMenu);
 			const auto statusLabel = statusWidget.data();
 			addRow(tr::lng_proxy_box_status(), std::move(statusWidget));
-			const auto relayout = [=] {
-				table->resizeToWidth(table->width());
-			};
 			const auto setUnavailable = [=] {
 				state->statusValue = TextWithEntities{
 					tr::lng_proxy_box_table_unavailable(tr::now),
 				};
 				statusLabel->setTextColorOverride(
 					st::proxyRowStatusFgOffline->c);
-				relayout();
 			};
 			const auto runCheck = [=] {
 				if (!weak) {
@@ -1894,7 +2423,6 @@ void ProxiesBoxController::ShowApplyConfirmation(
 					tr::lng_proxy_box_table_checking(tr::now),
 				};
 				statusLabel->setTextColorOverride(st::proxyRowStatusFg->c);
-				relayout();
 				MTP::StartProxyCheck(
 					&account->mtp(),
 					proxy,
@@ -1916,7 +2444,6 @@ void ProxiesBoxController::ShowApplyConfirmation(
 						};
 						statusLabel->setTextColorOverride(
 							st::proxyRowStatusFgAvailable->c);
-						relayout();
 					},
 					[=](Connection *raw) {
 						if (!weak || state->finished) {
@@ -1955,11 +2482,13 @@ void ProxiesBoxController::ShowApplyConfirmation(
 			});
 		}
 
-		if (type == Type::Mtproto) {
+		if (type == Type::Mtproto || type == Type::Web) {
 			table->addRow(
 				object_ptr<Ui::FlatLabel>(
 					table,
-					tr::lng_proxy_sponsor_warning(),
+					(type == Type::Web)
+						? tr::lng_proxy_web_warning()
+						: tr::lng_proxy_sponsor_warning(),
 					st::proxyApplyBoxSponsorLabel),
 				object_ptr<Ui::RpWidget>(nullptr),
 				st::proxyApplyBoxSponsorMargin,
@@ -1969,6 +2498,8 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		const auto enableButton = box->addButton(
 			tr::lng_proxy_box_table_button(),
 			[=] {
+				// Starting a web proxy may run a nested loop closing the box.
+				const auto weak = base::make_weak(box);
 				auto &settings = Core::App().settings().proxy();
 				if (settings.indexInList(proxy) < 0) {
 					settings.addToList(proxy);
@@ -1977,7 +2508,9 @@ void ProxiesBoxController::ShowApplyConfirmation(
 					proxy,
 					ProxyData::Settings::Enabled);
 				Local::writeSettings();
-				box->closeBox();
+				if (weak) {
+					box->closeBox();
+				}
 			});
 		enableButton->setFullRadius(true);
 		box->events() | rpl::on_next([=](not_null<QEvent*> e) {
@@ -2005,6 +2538,13 @@ auto ProxiesBoxController::proxySettingsValue() const
 }
 
 void ProxiesBoxController::refreshChecker(Item &item) {
+	if (item.data.type == Type::Web) {
+		MTP::ResetProxyCheckers(item.checker, item.checkerv6);
+		item.state = ItemState::NotTested;
+		item.ping = 0;
+		updateView(item);
+		return;
+	}
 	item.state = ItemState::Checking;
 	const auto id = item.id;
 	MTP::StartProxyCheck(
@@ -2095,6 +2635,12 @@ void ProxiesBoxController::deleteItems() {
 	}
 }
 
+void ProxiesBoxController::deleteItems(const base::flat_set<int> &ids) {
+	for (const auto id : ids) {
+		setDeleted(id, true);
+	}
+}
+
 void ProxiesBoxController::restoreItem(int id) {
 	setDeleted(id, false);
 }
@@ -2104,9 +2650,19 @@ void ProxiesBoxController::shareItem(int id, bool qr) {
 }
 
 void ProxiesBoxController::shareItems() {
+	auto ids = base::flat_set<int>();
+	for (const auto &item : _list) {
+		ids.emplace(item.id);
+	}
+	shareItems(ids);
+}
+
+void ProxiesBoxController::shareItems(const base::flat_set<int> &ids) {
 	auto result = QString();
 	for (const auto &item : _list) {
-		if (!item.deleted && ProxyDataIsShareable(item.data)) {
+		if (!ids.contains(item.id)) {
+			continue;
+		} else if (!item.deleted && ProxyDataIsShareable(item.data)) {
 			const auto link = ProxyDataToPublicLink(_account, item.data);
 			if (!link.isEmpty()) {
 				result += (result.isEmpty() ? QString() : u"\n\n"_q) + link;
@@ -2145,8 +2701,20 @@ void ProxiesBoxController::applyItem(int id) {
 	updateView(*item);
 }
 
+void ProxiesBoxController::openBrowser(int id) {
+	const auto item = findById(id);
+	if (_settings.isEnabled()
+		&& _settings.selected() == item->data
+		&& item->data.type == Type::Web) {
+		MTP::WebProxy::Transport::OpenBrowser(item->data);
+	}
+}
+
 void ProxiesBoxController::setDeleted(int id, bool deleted) {
 	auto item = findById(id);
+	if (item->deleted == deleted) {
+		return;
+	}
 	item->deleted = deleted;
 
 	if (deleted) {
@@ -2218,16 +2786,27 @@ object_ptr<Ui::BoxContent> ProxiesBoxController::editItemBox(int id) {
 void ProxiesBoxController::replaceItemWith(
 		std::vector<Item>::iterator which,
 		std::vector<Item>::iterator with) {
+	// Read before the erase below: _list is a vector, so erasing `which`
+	// shifts everything after it and leaves `with` naming the wrong item.
+	const auto withId = with->id;
+	const auto withDeleted = with->deleted;
+
+	if (which->deleted) {
+		// A deleted item is not in the settings list at all, so it has to
+		// go back in before it can be removed - the same restore-first
+		// order replaceItemValue() uses right below.
+		restoreItem(which->id);
+	}
 	const auto removed = _settings.removeFromList(which->data);
 	Assert(removed);
 
 	_views.fire({ which->id });
 	_list.erase(which);
 
-	if (with->deleted) {
-		restoreItem(with->id);
+	if (withDeleted) {
+		restoreItem(withId);
 	}
-	applyItem(with->id);
+	applyItem(withId);
 	saveDelayed();
 }
 
@@ -2302,17 +2881,6 @@ bool ProxiesBoxController::setProxySettings(ProxyData::Settings value) {
 	return true;
 }
 
-void ProxiesBoxController::setProxyForCalls(bool enabled) {
-	if (_settings.useProxyForCalls() == enabled) {
-		return;
-	}
-	_settings.setUseProxyForCalls(enabled);
-	if (_settings.isEnabled() && _settings.selected().supportsCalls()) {
-		_settings.connectionTypeChangesNotify();
-	}
-	saveDelayed();
-}
-
 void ProxiesBoxController::setProxyRotationEnabled(bool enabled) {
 	if (_settings.proxyRotationEnabled() == enabled) {
 		return;
@@ -2367,29 +2935,51 @@ void ProxiesBoxController::updateView(const Item &item) {
 		case Type::Http: return u"HTTP"_q;
 		case Type::Socks5: return u"SOCKS5"_q;
 		case Type::Mtproto: return u"MTPROTO"_q;
+		case Type::Web: return u"WEB"_q;
 		}
 		Unexpected("Proxy type in ProxiesBoxController::updateView.");
 	}();
 	const auto state = [&] {
 		if (!selected || !_settings.isEnabled()) {
 			return item.state;
+		} else if (item.data.type == Type::Web) {
+			switch (MTP::WebProxy::Transport::CurrentState(item.data)) {
+			case MTP::WebProxy::Transport::State::WaitingForBrowser:
+				return ItemState::WaitingForBrowser;
+			case MTP::WebProxy::Transport::State::Failed:
+				return ItemState::Unavailable;
+			case MTP::WebProxy::Transport::State::Connected:
+				return ItemState::Online;
+			case MTP::WebProxy::Transport::State::Idle:
+				return ItemState::NotTested;
+			case MTP::WebProxy::Transport::State::Connecting:
+				return ItemState::Connecting;
+			}
+			Unexpected("Web proxy transport state.");
 		} else if (_account->mtp().dcstate() == MTP::ConnectedState) {
 			return ItemState::Online;
 		}
 		return ItemState::Connecting;
 	}();
 	const auto supportsShare = ProxyDataIsShareable(item.data);
-	const auto supportsCalls = item.data.supportsCalls();
 	_views.fire({
 		item.id,
 		type,
-		item.data.host,
+		((item.data.type == Type::Web)
+			? item.data.webAddress()
+			: item.data.host),
 		item.data.port,
 		item.ping,
 		!deleted && selected,
 		deleted,
 		!deleted && supportsShare,
-		supportsCalls,
+		item.data.type == Type::Web,
+		!deleted
+			&& selected
+			&& _settings.isEnabled()
+			&& item.data.type == Type::Web
+			&& (state == ItemState::WaitingForBrowser
+				|| state == ItemState::Unavailable),
 		state,
 	});
 }

@@ -8,8 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_chat_participants.h"
 
 #include "apiwrap.h"
-#include "boxes/add_contact_box.h" // ShowAddParticipantsError
 #include "boxes/peers/add_participants_box.h" // ChatInviteForbidden
+#include "boxes/add_contact_box.h" // ShowAddParticipantsError
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_channel_admins.h"
@@ -745,7 +745,8 @@ void ChatParticipants::requestSelf(not_null<ChannelData*> channel) {
 		});
 	}).fail([=](const MTP::Error &error) {
 		_selfParticipantRequests.erase(channel);
-		if (error.type() == u"CHANNEL_PRIVATE"_q) {
+		if (error.type() == u"CHANNEL_PRIVATE"_q
+			|| error.type() == u"USER_BANNED_IN_CHANNEL"_q) {
 			channel->privateErrorReceived();
 		}
 		finalize();
@@ -783,6 +784,7 @@ void ChatParticipants::kick(
 
 		_kickRequests.remove(KickRequest(channel, participant));
 		channel->applyEditBanned(participant, currentRights, rights);
+		applyKicked(channel, participant, true);
 	}).fail([this, kick] {
 		_kickRequests.remove(kick);
 	}).send();
@@ -811,11 +813,49 @@ void ChatParticipants::unblock(
 		} else {
 			channel->updateFullForced();
 		}
+		applyKicked(channel, participant, false);
 	}).fail([=] {
 		_kickRequests.remove(kick);
 	}).send();
 
 	_kickRequests.emplace(kick, requestId);
+}
+
+rpl::producer<bool> ChatParticipants::kickedValue(
+		not_null<ChannelData*> channel,
+		not_null<PeerData*> participant) {
+	const auto key = KickRequest(channel, participant);
+	auto i = _kicked.find(key);
+	if (i == end(_kicked)) {
+		i = _kicked.emplace(key, std::make_unique<Kicked>()).first;
+		const auto raw = i->second.get();
+		raw->requestId = _api.request(MTPchannels_GetParticipant(
+			channel->inputChannel(),
+			participant->input()
+		)).done([=](const MTPchannels_ChannelParticipant &result) {
+			raw->requestId = 0;
+			raw->value = ChatParticipant(
+				result.data().vparticipant(),
+				channel).isKicked();
+		}).fail([=] {
+			raw->requestId = 0;
+		}).send();
+	}
+	return i->second->value.value();
+}
+
+void ChatParticipants::applyKicked(
+		not_null<ChannelData*> channel,
+		not_null<PeerData*> participant,
+		bool kicked) {
+	const auto key = KickRequest(channel, participant);
+	auto i = _kicked.find(key);
+	if (i == end(_kicked)) {
+		i = _kicked.emplace(key, std::make_unique<Kicked>()).first;
+	} else if (const auto requestId = base::take(i->second->requestId)) {
+		_api.request(requestId).cancel();
+	}
+	i->second->value = kicked;
 }
 
 void ChatParticipants::loadSimilarPeers(not_null<PeerData*> peer) {

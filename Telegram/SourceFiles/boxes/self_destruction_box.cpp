@@ -14,13 +14,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/passcode_box.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
-#include "ui/rect.h"
-#include "ui/widgets/checkbox.h"
-#include "ui/widgets/labels.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/checkbox.h"
+#include "ui/widgets/labels.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/rect.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
@@ -130,7 +131,7 @@ void SelfDestructionBox::gotCurrent(int days) {
 
 	auto daysAdjusted = _ttlValues[0];
 	for (const auto value : _ttlValues) {
-		if (qAbs(days - value) < qAbs(days - daysAdjusted)) {
+		if (std::abs(days - value) < std::abs(days - daysAdjusted)) {
 			daysAdjusted = value;
 		}
 	}

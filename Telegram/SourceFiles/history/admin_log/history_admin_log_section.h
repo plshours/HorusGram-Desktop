@@ -7,13 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "window/section_widget.h"
-#include "window/section_memento.h"
-#include "history/admin_log/history_admin_log_item.h"
 #include "history/admin_log/history_admin_log_filter_value.h"
+#include "history/admin_log/history_admin_log_item.h"
+#include "mtproto/sender.h"
+#include "tgw/tgw_scroll.h"
 #include "ui/controls/swipe_handler_data.h"
 #include "ui/effects/animations.h"
-#include "mtproto/sender.h"
+#include "window/section_memento.h"
+#include "window/section_widget.h"
 
 namespace Ui {
 class ElasticScroll;
@@ -53,6 +54,8 @@ public:
 		not_null<Window::SectionMemento*> memento,
 		const Window::SectionShow &params) override;
 	std::shared_ptr<Window::SectionMemento> createMemento() override;
+	auto createIdentityMemento()
+		-> std::shared_ptr<Window::SectionMemento> override;
 
 	void setInternalState(const QRect &geometry, not_null<SectionMemento*> memento);
 
@@ -94,6 +97,7 @@ private:
 	object_ptr<Ui::IconButton> _whatIsThis;
 	object_ptr<Ui::JumpDownButton> _scrollDown;
 	Ui::Animations::Simple _scrollDownShown;
+	Tgw::ScrollFlight _scrollToFlight;
 	Ui::Animations::Simple _scrollToAnimation;
 	bool _scrollDownIsShown = false;
 

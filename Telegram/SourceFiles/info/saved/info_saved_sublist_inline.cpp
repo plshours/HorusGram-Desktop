@@ -12,11 +12,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_values.h"
 #include "data/data_saved_sublist.h"
 #include "data/data_session.h"
-#include "history/history.h"
-#include "history/history_item.h"
+#include "history/view/reactions/history_view_reactions_button.h"
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_list_widget.h"
-#include "history/view/reactions/history_view_reactions_button.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "info/info_controller.h"
 #include "info/info_memento.h"
 #include "lang/lang_keys.h"
@@ -28,9 +28,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
+#include "window/themes/window_theme.h"
 #include "window/main_window.h"
 #include "window/section_widget.h"
-#include "window/themes/window_theme.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 
@@ -215,7 +215,8 @@ void InlineSublistInner::updateGeometry(QRect rect) {
 		return;
 	}
 	_inlineViewportHeight = rect.height();
-	_list->resizeToWidth(rect.width(), rect.height());
+	// Short list would sink to bottom of viewport.
+	_list->resizeToWidth(rect.width(), 0);
 	if (!_viewerRefreshed) {
 		_viewerRefreshed = true;
 		_list->refreshViewer();

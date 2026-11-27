@@ -7,35 +7,36 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "intro/intro_step.h"
 
-#include "intro/intro_widget.h"
+#include "api/api_peer_photo.h"
+#include "apiwrap.h"
+#include "boxes/abstract_box.h"
+#include "core/application.h"
+#include "core/core_settings.h"
+#include "data/data_auto_download.h"
+#include "data/data_chat_filters.h"
+#include "data/data_session.h"
+#include "data/data_user.h"
 #include "intro/intro_signup.h"
-#include "storage/localstorage.h"
-#include "storage/storage_account.h"
-#include "lang/lang_keys.h"
-#include "lang/lang_instance.h"
+#include "intro/intro_widget.h"
 #include "lang/lang_cloud_manager.h"
+#include "lang/lang_instance.h"
+#include "lang/lang_keys.h"
 #include "main/main_account.h"
 #include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
-#include "boxes/abstract_box.h"
-#include "core/application.h"
-#include "core/core_settings.h"
-#include "apiwrap.h"
-#include "api/api_peer_photo.h"
 #include "mainwindow.h"
+#include "storage/localstorage.h"
+#include "storage/storage_account.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/effects/slide_animation.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/fade_wrap.h"
-#include "ui/effects/slide_animation.h"
 #include "ui/ui_utility.h"
-#include "data/data_user.h"
-#include "data/data_auto_download.h"
-#include "data/data_session.h"
-#include "data/data_chat_filters.h"
 #include "window/window_controller.h"
+
 #include "styles/style_intro.h"
 #include "hoursgram/customization/intro_look.h"
 #include "styles/style_hoursgram_design.h"
@@ -444,14 +445,6 @@ void Step::fillSentCodeData(const MTPDauth_sentCode &data) {
 	});
 }
 
-void Step::showDescription() {
-	_description->show(anim::type::normal);
-}
-
-void Step::hideDescription() {
-	_description->hide(anim::type::normal);
-}
-
 void Step::paintContentSnapshot(QPainter &p, const QPixmap &snapshot, float64 alpha, float64 howMuchHidden) {
 	if (!snapshot.isNull()) {
 		const auto contentTop = anim::interpolate(
@@ -518,9 +511,11 @@ void Step::paintCover(QPainter &p, int top) {
 	}
 	if (top < 0) {
 		auto shown = float64(coverHeight) / st::introCoverHeight;
-		auto leftShown = qRound(shown * (left + st::introCoverLeft.width()));
+		const auto leftFull = left + st::introCoverLeft.width();
+		auto leftShown = int(base::SafeRound(shown * leftFull));
 		left = leftShown - st::introCoverLeft.width();
-		auto rightShown = qRound(shown * (right + st::introCoverRight.width()));
+		const auto rightFull = right + st::introCoverRight.width();
+		auto rightShown = int(base::SafeRound(shown * rightFull));
 		right = rightShown - st::introCoverRight.width();
 	}
 	st::introCoverLeft.paint(p, left, coverHeight - st::introCoverLeft.height(), width());
@@ -550,7 +545,7 @@ int Step::contentTop() const {
 				/ (st::introStepHeightFull - st::windowMinHeight),
 			0.,
 			1.);
-		result += qRound(added * st::introContentTopAdd);
+		result += int(base::SafeRound(added * st::introContentTopAdd));
 	}
 	return result;
 }

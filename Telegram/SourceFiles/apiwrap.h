@@ -9,9 +9,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "api/api_common.h"
 #include "base/timer.h"
-#include "mtproto/sender.h"
 #include "data/stickers/data_stickers_set.h"
-#include "data/data_messages.h"
+#include "mtproto/sender.h"
 
 class TaskQueue;
 class HistoryItem;
@@ -25,11 +24,17 @@ namespace Main {
 class Session;
 } // namespace Main
 
+namespace Media::Encode {
+struct VideoSource;
+} // namespace Media::Encode
+
 namespace Iv {
 struct RichPage;
 } // namespace Iv
 
 namespace Data {
+enum class LoadDirection : char;
+struct MessagePosition;
 struct ReactionId;
 struct UpdatedFileReferences;
 class WallPaper;
@@ -83,8 +88,12 @@ class ViewsManager;
 class ConfirmPhone;
 class PeerPhoto;
 class PeerColors;
+class ShareThemes;
+class Stories;
+class BotInfoLocalizations;
 class Polls;
 class TodoLists;
+class RichTasks;
 class ChatParticipants;
 class Communities;
 class UnreadThings;
@@ -267,7 +276,6 @@ public:
 
 	void requestWebPageDelayed(not_null<WebPageData*> page);
 	void clearWebPageRequest(not_null<WebPageData*> page);
-	void clearWebPageRequests();
 
 	void scheduleStickerSetRequest(uint64 setId, uint64 access);
 	void requestStickerSets();
@@ -310,6 +318,10 @@ public:
 		Dialogs::Key chat,
 		const QDate &date,
 		Fn<void(not_null<PeerData*>, MsgId)> callback);
+	void resolveJumpToTime(
+		Dialogs::Key chat,
+		TimeId when,
+		Fn<void(not_null<PeerData*>, MsgId)> callback);
 
 	using SliceType = Data::LoadDirection;
 	void requestHistory(
@@ -323,11 +335,17 @@ public:
 		Storage::SharedMediaType type,
 		MsgId messageId,
 		SliceType slice);
+	void requestPinnedMessagesIfNeeded(
+		not_null<PeerData*> peer,
+		MsgId messageId,
+		MsgId topicRootId = 0,
+		PeerId monoforumPeerId = 0);
 	mtpRequestId requestGlobalMedia(
 		Storage::SharedMediaType type,
 		const QString &query,
 		int32 offsetRate,
 		Data::MessagePosition offsetPosition,
+		bool onlyForwardable,
 		Fn<void(Api::GlobalMediaResult)> done);
 
 	void readFeaturedSetDelayed(uint64 setId);
@@ -337,10 +355,11 @@ public:
 	}
 	void sendAction(const SendAction &action);
 	void finishForwarding(const SendAction &action);
-	void forwardMessages(
+	FullMsgId forwardMessages(
 		Data::ResolvedForwardDraft &&draft,
 		SendAction action,
-		FnMut<void()> &&successCallback = nullptr);
+		FnMut<void()> &&successCallback = nullptr,
+		Fn<void(const MessageIdsList&)> sentCallback = nullptr);
 	void shareContact(
 		const QString &phone,
 		const QString &firstName,
@@ -360,6 +379,7 @@ public:
 		VoiceWaveform waveform,
 		crl::time duration,
 		bool video,
+		std::shared_ptr<Media::Encode::VideoSource> videoSource,
 		const SendAction &action);
 	void sendFiles(
 		Ui::PreparedList &&list,
@@ -453,8 +473,10 @@ public:
 	[[nodiscard]] Api::ReadMetrics &readMetrics();
 	[[nodiscard]] Api::ConfirmPhone &confirmPhone();
 	[[nodiscard]] Api::PeerPhoto &peerPhoto();
+	[[nodiscard]] Api::Stories &stories();
 	[[nodiscard]] Api::Polls &polls();
 	[[nodiscard]] Api::TodoLists &todoLists();
+	[[nodiscard]] Api::RichTasks &richTasks();
 	[[nodiscard]] Api::ChatParticipants &chatParticipants();
 	[[nodiscard]] Api::Communities &communities();
 	[[nodiscard]] Api::UnreadThings &unreadThings();
@@ -465,6 +487,8 @@ public:
 	[[nodiscard]] Api::Usernames &usernames();
 	[[nodiscard]] Api::Websites &websites();
 	[[nodiscard]] Api::PeerColors &peerColors();
+	[[nodiscard]] Api::ShareThemes &shareThemes();
+	[[nodiscard]] Api::BotInfoLocalizations &botInfoLocalizations();
 
 	void updatePrivacyLastSeens();
 
@@ -565,18 +589,18 @@ private:
 	void requestSavedGifs(TimeId now);
 	void readFeaturedSets();
 
-	void resolveJumpToHistoryDate(
+	void resolveJumpToHistoryTime(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		PeerId monoforumPeerId,
-		const QDate &date,
+		TimeId when,
 		Fn<void(not_null<PeerData*>, MsgId)> callback);
 	template <typename Callback>
-	void requestMessageAfterDate(
+	void requestMessageAfterTime(
 		not_null<PeerData*> peer,
 		MsgId topicRootId,
 		PeerId monoforumPeerId,
-		const QDate &date,
+		TimeId when,
 		Callback &&callback);
 
 	void sharedMediaDone(
@@ -585,10 +609,6 @@ private:
 		PeerId monoforumPeerId,
 		SharedMediaType type,
 		Api::SearchResult &&parsed);
-	void globalMediaDone(
-		SharedMediaType type,
-		FullMsgId messageId,
-		Api::GlobalMediaResult &&parsed);
 
 	void sendSharedContact(
 		const QString &phone,
@@ -602,6 +622,11 @@ private:
 		not_null<PeerData*> peer,
 		bool justClear,
 		bool revoke);
+	void deleteHistory(
+		not_null<PeerData*> peer,
+		bool justClear,
+		bool revoke,
+		int retries);
 	void applyAffectedMessages(
 		const MTPmessages_AffectedMessages &result) const;
 
@@ -696,9 +721,13 @@ private:
 	};
 	base::flat_map<NotifySettingsKey, mtpRequestId> _notifySettingRequests;
 
+	struct DraftSaveState {
+		mtpRequestId requestId = 0;
+		bool changedWhileSaving = false;
+	};
 	base::flat_map<
 		base::weak_ptr<Data::Thread>,
-		mtpRequestId> _draftsSaveRequestIds;
+		DraftSaveState> _draftSaves;
 	base::Timer _draftsSaveTimer;
 
 	base::flat_set<mtpRequestId> _stickerSetDisenableRequests;
@@ -828,8 +857,10 @@ private:
 	const std::unique_ptr<Api::ReadMetrics> _readMetrics;
 	const std::unique_ptr<Api::ConfirmPhone> _confirmPhone;
 	const std::unique_ptr<Api::PeerPhoto> _peerPhoto;
+	const std::unique_ptr<Api::Stories> _stories;
 	const std::unique_ptr<Api::Polls> _polls;
 	const std::unique_ptr<Api::TodoLists> _todoLists;
+	const std::unique_ptr<Api::RichTasks> _richTasks;
 	const std::unique_ptr<Api::ChatParticipants> _chatParticipants;
 	const std::unique_ptr<Api::Communities> _communities;
 	const std::unique_ptr<Api::UnreadThings> _unreadThings;
@@ -840,6 +871,8 @@ private:
 	const std::unique_ptr<Api::Usernames> _usernames;
 	const std::unique_ptr<Api::Websites> _websites;
 	const std::unique_ptr<Api::PeerColors> _peerColors;
+	const std::unique_ptr<Api::ShareThemes> _shareThemes;
+	const std::unique_ptr<Api::BotInfoLocalizations> _botInfoLocalizations;
 
 	mtpRequestId _wallPaperRequestId = 0;
 	QString _wallPaperSlug;

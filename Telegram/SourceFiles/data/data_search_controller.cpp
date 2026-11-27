@@ -7,14 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_search_controller.h"
 
-#include "main/main_session.h"
-#include "data/data_session.h"
-#include "data/data_messages.h"
+#include "apiwrap.h"
 #include "data/data_channel.h"
 #include "data/data_histories.h"
+#include "data/data_messages.h"
+#include "data/data_session.h"
 #include "history/history.h"
 #include "history/history_item.h"
-#include "apiwrap.h"
+#include "main/main_session.h"
 
 namespace Api {
 namespace {
@@ -94,7 +94,8 @@ std::optional<GlobalMediaRequest> PrepareGlobalMediaRequest(
 
 GlobalMediaResult ParseGlobalMediaResult(
 		not_null<Main::Session*> session,
-		const MTPmessages_Messages &data) {
+		const MTPmessages_Messages &data,
+		bool onlyForwardable) {
 	auto result = GlobalMediaResult();
 
 	auto messages = (const QVector<MTPMessage>*)nullptr;
@@ -126,7 +127,12 @@ GlobalMediaResult ParseGlobalMediaResult(
 			MessageFlags(),
 			addType);
 		if (item) {
-			result.messageIds.push_back(item->position());
+			result.offsetPosition = item->position();
+			if (onlyForwardable && !item->allowsForward()) {
+				++result.filteredCount;
+			} else {
+				result.messageIds.push_back(item->position());
+			}
 		}
 	}
 	return result;
@@ -142,6 +148,8 @@ std::optional<SearchRequest> PrepareSearchRequest(
 		Data::LoadDirection direction) {
 	const auto filter = PrepareSearchFilter(type);
 	if (query.isEmpty() && filter.type() == mtpc_inputMessagesFilterEmpty) {
+		return std::nullopt;
+	} else if (topicRootId && type == Storage::SharedMediaType::ChatPhoto) {
 		return std::nullopt;
 	}
 

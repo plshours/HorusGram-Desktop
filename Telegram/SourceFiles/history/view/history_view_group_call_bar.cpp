@@ -7,18 +7,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/history_view_group_call_bar.h"
 
-#include "data/data_channel.h"
-#include "data/data_user.h"
+#include "calls/group/calls_group_call.h"
+#include "calls/calls_instance.h"
+#include "core/application.h"
 #include "data/data_changes.h"
+#include "data/data_channel.h"
 #include "data/data_group_call.h"
 #include "data/data_peer_values.h"
+#include "data/data_user.h"
 #include "main/main_session.h"
 #include "ui/chat/group_call_bar.h"
 #include "ui/chat/group_call_userpics.h"
 #include "ui/painter.h"
-#include "calls/group/calls_group_call.h"
-#include "calls/calls_instance.h"
-#include "core/application.h"
+
 #include "styles/style_chat_helpers.h"
 
 // HorusGram includes
@@ -383,9 +384,12 @@ rpl::producer<Ui::GroupCallBarContent> GroupCallBarContentByCall(
 			return RegenerateUserpics(state, call, userpicSize);
 		}) | rpl::on_next(pushNext, lifetime);
 
+		// The only stream here not owned by the call, so it can fire
+		// after the call was destroyed.
+		const auto weakCall = base::make_weak(call);
 		call->peer()->session().downloaderTaskFinished(
 		) | rpl::filter([=] {
-			return state->someUserpicsNotLoaded;
+			return weakCall && state->someUserpicsNotLoaded;
 		}) | rpl::on_next([=] {
 			for (const auto &userpic : state->userpics) {
 				if (userpic.peer->userpicUniqueKey(userpic.view)

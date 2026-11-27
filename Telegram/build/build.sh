@@ -31,10 +31,41 @@ while IFS='' read -r line || [[ -n "$line" ]]; do
   BuildTarget="$line"
 done < "$FullScriptPath/target"
 
+if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
+  python3 "$FullScriptPath/build_mac.py" --check \
+    || Error "macOS releases require preserved Command Line Tools 26.6 and macOS SDK 26.5."
+fi
+
+UpdateKeysLoc="$FullScriptPath/../Resources/update"
+
+# Update signing settings. Edit these directly when rotating keys, they are
+# the single source of truth (no environment overrides).
+ReleaseLocalKey="$FullScriptPath/../../../DesktopPrivate/modern/release-local-2026b.pem"
+ReleaseLocalKeyId="rl-2026b"
+ReleaseCloudVault="tdesktop-release-kv"
+ReleaseCloudKeyId="rc-2026a"
+ReleaseCloudKeyName="release-2026a"
+
+if [ "$BuildTarget" != "macstore" ]; then
+  if [ ! -f "$ReleaseLocalKey" ]; then
+    Error "Release local key not found: $ReleaseLocalKey"
+  fi
+  python3 "$FullScriptPath/sign_update.py" --check \
+    --az-vault "$ReleaseCloudVault" \
+    --az-key "$ReleaseCloudKeyName" \
+    --keys-loc "$UpdateKeysLoc" \
+    --key-id "$ReleaseCloudKeyId" \
+    || Error "Cloud update signing is not ready, fix the setup above before building."
+fi
+
 while IFS='' read -r line || [[ -n "$line" ]]; do
   set $line
   eval $1="$2"
 done < "$FullScriptPath/version"
+
+if [ "$AppVersion" -lt 7002000 ]; then
+  Error "The v2 update format requires version 7.2 or newer."
+fi
 
 VersionForPacker="$AppVersion"
 if [ "$AlphaVersion" != "0" ]; then
@@ -50,12 +81,78 @@ else
   AlphaBetaParam='-beta'
 fi
 
+if [ "$AlphaVersion" != "0" ]; then
+  Error "The v2 update format has no alpha channel."
+fi
+case "$AppVersionStr" in
+  *.*.*) ;;
+  *) Error "AppVersionStr '$AppVersionStr' must have three components for the v2 names." ;;
+esac
+UpdateChannel="stable"
+ArtifactSuffix=""
+if [ "$BetaChannel" != "0" ]; then
+  UpdateChannel="beta"
+  ArtifactSuffix="-beta"
+fi
+
+BackupFolder="t$BuildTarget"
+if [ "$BuildTarget" == "linux" ]; then
+  BackupFolder="linux-x64"
+elif [ "$BuildTarget" == "mac" ]; then
+  BackupFolder="mac"
+fi
+
+SignUpdate() {
+  until python3 "$FullScriptPath/sign_update.py" \
+      --input signing-input.bin \
+      --output release-cloud.sig \
+      --az-vault "$ReleaseCloudVault" \
+      --az-key "$ReleaseCloudKeyName"; do
+    echo "Cloud signing of $UpdateFile failed, retrying in 10 seconds (fix az login / network in another terminal).."
+    sleep 10
+  done
+}
+
+PackUpdate() {
+  "./Packer" "$@" -version $VersionForPacker -channel $UpdateChannel \
+    -keys-loc "$UpdateKeysLoc" -emit-signing-input signing-input.bin
+  SignUpdate
+  "./Packer" -channel $UpdateChannel -keys-loc "$UpdateKeysLoc" \
+    -unsigned "$UpdateFile.unsigned" \
+    -embed-signatures "$ReleaseCloudKeyId:release-cloud.sig" \
+    -local-key "$ReleaseLocalKey" \
+    -local-key-id "$ReleaseLocalKeyId"
+  rm signing-input.bin release-cloud.sig "$UpdateFile.unsigned"
+}
+
+CheckWidgetHelper() {
+  if [ ! -f "$1/Contents/Helpers/TelegramWidgetHelper" ]; then
+    echo "TelegramWidgetHelper not found in $1!"
+    return 1
+  fi
+  python3 "$FullScriptPath/sign_mac.py" --check "$1"
+}
+
+Sha256() {
+  local Digest
+  [ -f "$1" ] && Digest=`shasum -a 256 < "$1"` || return 1
+  Digest="${Digest%% *}"
+  case "$Digest" in
+    *[!0-9a-f]*) return 1 ;;
+  esac
+  [ ${#Digest} -eq 64 ] && echo "$Digest"
+}
+
+PolicyDigest() {
+  Sha256 "$HomePath/Telegram/TelegramWidgetHelperDirect.entitlements"
+}
+
 echo ""
 HomePath="$FullScriptPath/.."
 if [ "$BuildTarget" == "linux" ]; then
   echo "Building version $AppVersionStrFull for Linux 64bit.."
-  UpdateFile="tlinuxupd$AppVersion"
-  SetupFile="tsetup.$AppVersionStrFull.tar.xz"
+  UpdateFile="td-update-linux-x64-$AppVersion$ArtifactSuffix"
+  SetupFile="td-setup-linux-x64-$AppVersionStr$ArtifactSuffix.tar.xz"
   ProjectPath="$HomePath/../out"
   ReleasePath="$ProjectPath/Release"
   BinaryName="Telegram"
@@ -82,8 +179,8 @@ elif [ "$BuildTarget" == "mac" ] ; then
   if [ "$AC_USERNAME" == "" ]; then
     Error "AC_USERNAME not found!"
   fi
-  UpdateFileAMD64="tmacupd$AppVersion"
-  UpdateFileARM64="tarmacupd$AppVersion"
+  UpdateFileAMD64="td-update-mac-x64-$AppVersion$ArtifactSuffix"
+  UpdateFileARM64="td-update-mac-arm-$AppVersion$ArtifactSuffix"
   if [ "$MacArch" == "arm64" ]; then
     UpdateFile="$UpdateFileARM64"
   elif [ "$MacArch" == "x86_64" ]; then
@@ -94,10 +191,14 @@ elif [ "$BuildTarget" == "mac" ] ; then
   BinaryName="Telegram"
   if [ "$MacArch" != "" ]; then
     BundleName="$BinaryName.$MacArch.app"
-    SetupFile="tsetup.$MacArch.$AppVersionStrFull.dmg"
+    if [ "$MacArch" == "arm64" ]; then
+      SetupFile="td-setup-mac-arm-$AppVersionStr$ArtifactSuffix.dmg"
+    else
+      SetupFile="td-setup-mac-x64-$AppVersionStr$ArtifactSuffix.dmg"
+    fi
   else
     BundleName="$BinaryName.app"
-    SetupFile="tsetup.$AppVersionStrFull.dmg"
+    SetupFile="td-setup-mac-$AppVersionStr$ArtifactSuffix.dmg"
   fi
 elif [ "$BuildTarget" == "macstore" ]; then
   if [ "$AlphaVersion" != "0" ]; then
@@ -135,6 +236,28 @@ else
   fi
 fi
 
+if [ "$MacArch" == "" ]; then
+  LockDir="$ProjectPath/.build.lock"
+  if ! mkdir -p "$ProjectPath" || ! mkdir "$LockDir" 2> /dev/null; then
+    Error "Another build.sh seems to be running (found $LockDir, remove it if stale)."
+  fi
+  trap 'rmdir "$LockDir"' EXIT
+fi
+
+if [ "$BuildTarget" == "mac" ] && [ "$MacArch" == "" ]; then
+  ExistingUpdates=""
+  if [ -e "$ReleasePath/$UpdateFileARM64" ] || [ -L "$ReleasePath/$UpdateFileARM64" ]; then
+    ExistingUpdates="arm64 $UpdateFileARM64"
+  fi
+  if [ -e "$ReleasePath/$UpdateFileAMD64" ] || [ -L "$ReleasePath/$UpdateFileAMD64" ]; then
+    ExistingUpdates="${ExistingUpdates:+$ExistingUpdates, }x86_64 $UpdateFileAMD64"
+  fi
+  if [ "$ExistingUpdates" != "" ]; then
+    Error "Update files already exist in $ReleasePath ($ExistingUpdates), set them aside before rerunning!"
+  fi
+  ParentPolicy=`PolicyDigest` || Error "TelegramWidgetHelperDirect.entitlements could not be read!"
+fi
+
 DeployPath="$ReleasePath/deploy/$AppVersionStrMajor/$AppVersionStrFull"
 
 if [ "$BuildTarget" == "linux" ]; then
@@ -147,9 +270,9 @@ if [ "$BuildTarget" == "linux" ]; then
     fi
   fi
 
-  BackupPath="/media/psf/backup/tdesktop/$AppVersionStrMajor/$AppVersionStrFull/t$BuildTarget"
+  BackupPath="/media/psf/backup/tdesktop/$AppVersionStrMajor/$AppVersionStrFull/$BackupFolder"
   if [ ! -d "/media/psf/backup/tdesktop" ]; then
-    BackupPath="/mnt/c/Telegram/Projects/backup/tdesktop/$AppVersionStrMajor/$AppVersionStrFull/t$BuildTarget"
+    BackupPath="/mnt/c/Telegram/Projects/backup/tdesktop/$AppVersionStrMajor/$AppVersionStrFull/$BackupFolder"
     if [ ! -d "/mnt/c/Telegram/Projects/backup/tdesktop" ]; then
       Error "Backup folder not found!"
     fi
@@ -161,6 +284,8 @@ if [ "$BuildTarget" == "linux" ]; then
   cp "$ReleasePath/root/$BinaryName" "$ReleasePath/$BinaryName"
   cp "$ReleasePath/root/Updater" "$ReleasePath/Updater"
   cp "$ReleasePath/root/Packer" "$ReleasePath/Packer"
+  mkdir -p "$ReleasePath/TelegramHelpers"
+  cp "$ReleasePath/root/TelegramHelpers/TelegramWidgetHelper" "$ReleasePath/TelegramHelpers/TelegramWidgetHelper"
 
   echo "Dumping debug symbols.."
   "$ReleasePath/dump_syms" "$ReleasePath/$BinaryName" > "$ReleasePath/$BinaryName.sym"
@@ -168,11 +293,12 @@ if [ "$BuildTarget" == "linux" ]; then
 
   echo "Stripping the executable.."
   "$FullScriptPath/minidebug.sh" "$ReleasePath/$BinaryName"
+  strip -s "$ReleasePath/Updater"
   echo "Done!"
 
   echo "Preparing version $AppVersionStrFull, executing Packer.."
   cd "$ReleasePath"
-  "./Packer" -path "$BinaryName" -path Updater -version $VersionForPacker $AlphaBetaParam
+  PackUpdate -path "$BinaryName" -path Updater -path TelegramHelpers/TelegramWidgetHelper
   echo "Packer done!"
 
   if [ "$AlphaVersion" != "0" ]; then
@@ -202,11 +328,13 @@ if [ "$BuildTarget" == "linux" ]; then
     mkdir "$ReleasePath/deploy/$AppVersionStrMajor"
   fi
 
-  echo "Copying $BinaryName, Updater and $UpdateFile to deploy/$AppVersionStrMajor/$AppVersionStrFull..";
+  echo "Copying $BinaryName, Updater, TelegramWidgetHelper and $UpdateFile to deploy/$AppVersionStrMajor/$AppVersionStrFull..";
   mkdir "$DeployPath"
   mkdir "$DeployPath/$BinaryName"
+  mkdir "$DeployPath/$BinaryName/TelegramHelpers"
   mv "$ReleasePath/$BinaryName" "$DeployPath/$BinaryName/"
   mv "$ReleasePath/Updater" "$DeployPath/$BinaryName/"
+  mv "$ReleasePath/TelegramHelpers/TelegramWidgetHelper" "$DeployPath/$BinaryName/TelegramHelpers/"
   mv "$ReleasePath/$UpdateFile" "$DeployPath/"
   if [ "$AlphaVersion" != "0" ]; then
     mv "$ReleasePath/$AlphaKeyFile" "$DeployPath/"
@@ -240,12 +368,14 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
     echo "Preparing single $MacArch .app.."
     rm -rf $BundleName
     cp -R $BinaryName.app $BundleName
+    python3 "$FullScriptPath/sign_mac.py" --check-layout "$ReleasePath/$BundleName" || Error "Checking the widget helper in $BundleName failed!"
     lipo -thin $MacArch $BinaryName.app/Contents/MacOS/$BinaryName -output $BundleName/Contents/MacOS/$BinaryName
     lipo -thin $MacArch $BinaryName.app/Contents/Frameworks/Updater -output $BundleName/Contents/Frameworks/Updater
     lipo -thin $MacArch $BinaryName.app/Contents/Helpers/crashpad_handler -output $BundleName/Contents/Helpers/crashpad_handler
+    lipo -thin $MacArch $BinaryName.app/Contents/Helpers/TelegramWidgetHelper -output $BundleName/Contents/Helpers/TelegramWidgetHelper
     echo "Done!"
-  elif [ "$NotarizeRequestId" == "" ]; then
-    if [ "$NotarizeRequestIdAMD64" == "" ] && [ "$NotarizeRequestIdARM64" == "" ]; then
+  else
+    if [ "$NotarizeRequestId" == "" ] && [ "$NotarizeRequestIdAMD64" == "" ] && [ "$NotarizeRequestIdARM64" == "" ]; then
       if [ -f "$ReleasePath/$BinaryName.app/Contents/Info.plist" ]; then
         rm "$ReleasePath/$BinaryName.app/Contents/Info.plist"
       fi
@@ -255,10 +385,7 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
       rm -rf "$ReleasePath/$BinaryName.app/Contents/_CodeSignature"
       rm -rf "$ReleasePath/Updater"
 
-      ./configure.sh -D DESKTOP_APP_MAC_ARCH="arm64;x86_64" -DDESKTOP_APP_ENABLE_LTO=ON
-
-      cd $ProjectPath
-      cmake --build . --config Release --target Telegram
+      python3 "$FullScriptPath/build_mac.py" --configuration Release --output "$ReleasePath"
     fi
 
     if [ ! -d "$ReleasePath/$BinaryName.app" ]; then
@@ -268,14 +395,14 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
     cd $FullExecPath
 
     if [ "$BuildTarget" == "mac" ]; then
-      if [ "$NotarizeRequestIdAMD64" == "" ]; then
-        echo "Preparing single arm64 update.."
-        ./$0 arm64 request_uuid $NotarizeRequestIdARM64
-      fi
+      trap 'Error "Interrupted while preparing the single updates!"' HUP INT TERM
+      echo "Preparing single arm64 update.."
+      "$FullScriptPath/build.sh" arm64 request_uuid "$NotarizeRequestIdARM64"
 
       echo "Preparing single x86_64 update.."
-      ./$0 x86_64 request_uuid $NotarizeRequestIdAMD64
+      "$FullScriptPath/build.sh" x86_64 request_uuid "$NotarizeRequestIdAMD64"
 
+      trap - HUP INT TERM
       echo "Done."
     fi
     cd $ReleasePath
@@ -288,10 +415,16 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
       if [ ! -f "$ReleasePath/$BundleName/Contents/Helpers/crashpad_handler" ]; then
         Error "crashpad_handler not found!"
       fi
+      if [ ! -f "$ReleasePath/$BundleName/Contents/Helpers/TelegramWidgetHelper" ]; then
+        Error "TelegramWidgetHelper not found!"
+      fi
     fi
     if [ "$BuildTarget" == "macstore" ]; then
       if [ ! -d "$ReleasePath/$BundleName/Contents/Frameworks/Breakpad.framework" ]; then
         Error "Breakpad.framework not found!"
+      fi
+      if [ ! -f "$ReleasePath/$BundleName/Contents/XPCServices/TelegramWidgetHelper.xpc/Contents/MacOS/TelegramWidgetHelper" ]; then
+        Error "TelegramWidgetHelper.xpc not found!"
       fi
     fi
 
@@ -322,15 +455,16 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
     if [ "$BuildTarget" == "mac" ]; then
       strip "$ReleasePath/$BundleName/Contents/Frameworks/Updater"
       strip "$ReleasePath/$BundleName/Contents/Helpers/crashpad_handler"
+      strip "$ReleasePath/$BundleName/Contents/Helpers/TelegramWidgetHelper"
     fi
     echo "Done!"
 
     echo "Signing the application.."
     if [ "$BuildTarget" == "mac" ]; then
-      codesign --force --deep --timestamp --options runtime --sign "Developer ID Application: Telegram FZ-LLC (C67CF9S4VU)" "$ReleasePath/$BundleName" --entitlements "$HomePath/Telegram/Telegram.entitlements"
+      python3 "$FullScriptPath/sign_mac.py" --identity "Developer ID Application: Telegram FZ-LLC (C67CF9S4VU)" --entitlements "$HomePath/Telegram/Telegram.entitlements" --timestamp --runtime "$ReleasePath/$BundleName"
     elif [ "$BuildTarget" == "macstore" ]; then
       codesign --force --timestamp --options runtime --sign "3rd Party Mac Developer Application: Telegram FZ-LLC (C67CF9S4VU)" "$ReleasePath/$BundleName/Contents/Frameworks/Breakpad.framework/Versions/A/Resources/breakpadUtilities.dylib" --entitlements "$HomePath/Telegram/Breakpad.entitlements"
-      codesign --force --deep --timestamp --options runtime --sign "3rd Party Mac Developer Application: Telegram FZ-LLC (C67CF9S4VU)" "$ReleasePath/$BundleName" --entitlements "$HomePath/Telegram/Telegram Lite.entitlements"
+      python3 "$FullScriptPath/sign_mac.py" --identity "3rd Party Mac Developer Application: Telegram FZ-LLC (C67CF9S4VU)" --entitlements "$HomePath/Telegram/Telegram Lite.entitlements" --timestamp --runtime "$ReleasePath/$BundleName"
       echo "Making an installer.."
       productbuild --sign "3rd Party Mac Developer Installer: Telegram FZ-LLC (C67CF9S4VU)" --component "$ReleasePath/$BundleName" /Applications "$ReleasePath/$BinaryName.pkg"
     fi
@@ -361,11 +495,21 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
     if [ "$NotarizeRequestId" == "" ] || [ "$NotarizeRequestId" == "go" ]; then
       if [ "$AlphaVersion" == "0" ]; then
         cp -f tsetup_template.dmg tsetup.temp.dmg
-        TempDiskPath=`hdiutil attach -nobrowse -noautoopenrw -readwrite tsetup.temp.dmg | awk -F "\t" 'END {print $3}'`
+        until TempDiskPath=`hdiutil attach -nobrowse -noautoopenrw -readwrite tsetup.temp.dmg | awk -F "\t" 'END {print $3}'` && [ "$TempDiskPath" != "" ]; do
+          echo "Attaching tsetup.temp.dmg failed, retrying in 3 seconds.."
+          sleep 3
+        done
         cp -R "./$BundleName" "$TempDiskPath/"
+        rm -f "$TempDiskPath/$BundleName/Contents/Resources/AppIcon.icns"
         bless --folder "$TempDiskPath/"
-        hdiutil detach "$TempDiskPath"
-        hdiutil convert tsetup.temp.dmg -format UDBZ -ov -o "$SetupFile"
+        until hdiutil detach "$TempDiskPath"; do
+          echo "Detaching $TempDiskPath failed, retrying in 3 seconds.."
+          sleep 3
+        done
+        until hdiutil convert tsetup.temp.dmg -format UDBZ -ov -o "$SetupFile"; do
+          echo "Converting tsetup.temp.dmg failed, retrying in 3 seconds.."
+          sleep 3
+        done
         rm tsetup.temp.dmg
       fi
     fi
@@ -402,14 +546,44 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
         cd "$ReleasePath"
       fi
     fi
+    if [ "$NotarizeRequestId" != "" ] && [ "$NotarizeRequestId" != "go" ]; then
+      CheckWidgetHelper "$ReleasePath/$BundleName" || Error "Checking the widget helper in $BundleName failed!"
+      if [ ! -f "$ReleasePath/$SetupFile" ] || [ ! -r "$ReleasePath/$SetupFile" ]; then
+        Error "$SetupFile not found or not readable!"
+      fi
+      trap 'Error "Interrupted while checking $SetupFile!"' HUP INT TERM
+      if ! (
+        Result=0
+        trap 'Result=1' HUP INT TERM
+        InOwnGroup() {
+          python3 -c 'import os, sys; os.setpgrp(); os.execvp(sys.argv[1], sys.argv[1:])' "$@" < /dev/null > /dev/null
+        }
+        CheckPath=`mktemp -d -t tdesktop-check` || exit 1
+        if [ $Result == 0 ] && InOwnGroup hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$CheckPath" "$ReleasePath/$SetupFile"; then
+          if [ $Result == 0 ] && [ -L "$CheckPath/$BundleName" ]; then
+            echo "$BundleName in $SetupFile is a link!"
+            Result=1
+          elif [ $Result == 0 ] && ! CheckWidgetHelper "$CheckPath/$BundleName"; then
+            Result=1
+          fi
+        else
+          Result=1
+        fi
+        if [ "$(stat -f %d "$CheckPath")" != "$(stat -f %d "$CheckPath/..")" ]; then
+          InOwnGroup hdiutil detach "$CheckPath" || InOwnGroup hdiutil detach -force "$CheckPath" || Result=1
+        fi
+        rmdir "$CheckPath" || Result=1
+        exit $Result
+      ); then
+        Error "Checking the widget helper in $SetupFile failed!"
+      fi
+      trap - HUP INT TERM
+    fi
     echo "Beginning notarization process."
     xcrun notarytool submit "$SetupFile" --keychain-profile "preston" --wait
     xcrun stapler staple "$ReleasePath/$BundleName"
 
-    if [ "$MacArch" != "" ]; then
-      rm "$ReleasePath/$SetupFile"
-      echo "Setup file $SetupFile removed."
-    elif [ "$AlphaVersion" != "0" ]; then
+    if [ "$MacArch" == "" ] && [ "$AlphaVersion" != "0" ]; then
       rm -rf "$ReleasePath/AlphaTemp"
       mkdir "$ReleasePath/AlphaTemp"
       mkdir "$ReleasePath/AlphaTemp/$BinaryName"
@@ -419,7 +593,7 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
       mv "$SetupFile" "$ReleasePath/"
       cd "$ReleasePath"
       echo "Alpha archive re-created."
-    else
+    elif [ "$MacArch" == "" ]; then
       xcrun stapler staple "$ReleasePath/$SetupFile"
     fi
 
@@ -430,12 +604,19 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
       mv "$ReleasePath/$BundleName" "$UpdatePackPath/$BinaryName.app"
       cp "$ReleasePath/Packer" "$UpdatePackPath/"
       cd "$UpdatePackPath"
-      "./Packer" -path "$BinaryName.app" -target "$BuildTarget" -version $VersionForPacker -arch $MacArch $AlphaBetaParam
+      PackUpdate -path "$BinaryName.app" -target "$BuildTarget" -arch $MacArch
       echo "Packer done!"
       mv "$UpdateFile" "$ReleasePath/"
       cd "$ReleasePath"
       rm -rf "$UpdatePackPath"
+      rm "$ReleasePath/$SetupFile"
+      echo "Setup file $SetupFile removed."
       exit
+    fi
+
+    FinalPolicy=`PolicyDigest` || Error "TelegramWidgetHelperDirect.entitlements could not be read!"
+    if [ "$FinalPolicy" != "$ParentPolicy" ]; then
+      Error "TelegramWidgetHelperDirect.entitlements changed during the build!"
     fi
   fi
 
@@ -462,12 +643,12 @@ if [ "$BuildTarget" == "mac" ] || [ "$BuildTarget" == "macstore" ]; then
     mv "$ReleasePath/$SetupFile" "$DeployPath/"
 
     if [ "$BuildTarget" == "mac" ]; then
-      mkdir -p "$BackupPath/tmac"
-      cp "$DeployPath/$UpdateFileAMD64" "$BackupPath/tmac/"
-      cp "$DeployPath/$UpdateFileARM64" "$BackupPath/tmac/"
-      cp "$DeployPath/$SetupFile" "$BackupPath/tmac/"
+      mkdir -p "$BackupPath/$BackupFolder"
+      cp "$DeployPath/$UpdateFileAMD64" "$BackupPath/$BackupFolder/"
+      cp "$DeployPath/$UpdateFileARM64" "$BackupPath/$BackupFolder/"
+      cp "$DeployPath/$SetupFile" "$BackupPath/$BackupFolder/"
       if [ "$AlphaVersion" != "0" ]; then
-        cp -v "$DeployPath/$AlphaKeyFile" "$BackupPath/tmac/"
+        cp -v "$DeployPath/$AlphaKeyFile" "$BackupPath/$BackupFolder/"
       fi
     fi
   elif [ "$BuildTarget" == "macstore" ]; then

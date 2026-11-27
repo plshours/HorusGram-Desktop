@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "history/view/media/history_view_media.h"
-#include "base/weak_ptr.h"
 #include "base/timer.h"
+#include "base/weak_ptr.h"
+#include "history/view/media/history_view_media.h"
 #include "ui/text/text.h"
 
 struct HistoryMessageVia;
@@ -151,6 +151,8 @@ private:
 	QSize countCurrentSize(int newWidth) override;
 
 	bool needInfoDisplay() const;
+	int bottomInfoWidth() const;
+	int bottomInfoHeight() const;
 	int additionalWidth(
 		const TopicButton *topic,
 		const Reply *reply,
@@ -171,7 +173,7 @@ private:
 	const HistoryMessageForwarded *getDisplayedForwardedInfo() const;
 
 	std::unique_ptr<Content> _content;
-	Ui::Text::String _ephemeralText;
+	Ui::Text::String _ephemeralText = { 1 };
 	QSize _contentSize;
 	int _topAdded = 0;
 	bool _additionalOnTop = false;

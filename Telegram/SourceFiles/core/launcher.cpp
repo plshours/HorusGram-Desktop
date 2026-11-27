@@ -24,6 +24,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QStandardPaths>
 #include <QtCore/QLibraryInfo>
 
+extern "C" {
+#include <libavutil/log.h>
+} // extern "C"
+
 namespace Core {
 namespace {
 
@@ -75,7 +79,7 @@ FilteredCommandLineArguments::FilteredCommandLineArguments(
 		pushArgument(argv[i]);
 	}
 
-#if defined Q_OS_WIN || defined Q_OS_MAC
+#if defined Q_OS_WIN || defined Q_OS_MACOS
 	if (OptionFreeType.value() || OptionHighDpiDownscale.value()) {
 		pushArgument("-platform");
 #ifdef Q_OS_WIN
@@ -84,7 +88,7 @@ FilteredCommandLineArguments::FilteredCommandLineArguments(
 		pushArgument("cocoa:fontengine=freetype");
 #endif // !Q_OS_WIN
 	}
-#endif // Q_OS_WIN || Q_OS_MAC
+#endif // Q_OS_WIN || Q_OS_MACOS
 
 	pushArgument(nullptr);
 }
@@ -120,7 +124,7 @@ void ComputeDebugMode() {
 	auto file = QFile(debugModeSettingPath);
 	if (file.exists() && file.open(QIODevice::ReadOnly)) {
 		Logs::SetDebugEnabled(file.read(1) != "0");
-#if defined _DEBUG && !defined Q_OS_MAC
+#if defined _DEBUG && !defined Q_OS_MACOS
 	} else {
 		Logs::SetDebugEnabled(true);
 #endif
@@ -383,12 +387,19 @@ int Launcher::exec() {
 		return psFixPrevious();
 	}
 
+	// Before Logs::start(), which is where the working directory gets
+	// chosen: a translocated bundle never sees its TelegramForcePortable.
+	if (!Platform::CheckAppTranslocation()) {
+		return 0;
+	}
+
 	// Must be started before Platform is started.
 	Logs::start();
 	base::options::init(cWorkingDir() + "tdata/experimental_options.json");
 
 	// Must be called after options are inited.
 	initHighDpi();
+	initFFmpegMessageLogging();
 
 	if (Logs::DebugEnabled()) {
 		const auto openalLogPath = QDir::toNativeSeparators(
@@ -512,11 +523,45 @@ void Launcher::initQtMessageLogging() {
 		if (OriginalMessageHandler) {
 			OriginalMessageHandler(type, context, msg);
 		}
-		if (Logs::DebugEnabled() || !Logs::started()) {
+		// Warnings carry RHI and DirectComposition diagnostics of user reports.
+		if (Logs::DebugEnabled()
+			|| !Logs::started()
+			|| type == QtWarningMsg
+			|| type == QtCriticalMsg) {
 			if (!Logs::WritingEntry()) {
 				// Sometimes Qt logs something inside our own logging.
 				LOG((msg));
 			}
+		}
+	});
+}
+
+void Launcher::initFFmpegMessageLogging() {
+	av_log_set_level(AV_LOG_WARNING);
+	av_log_set_callback([](void *ptr, int level, const char *fmt, va_list vl) {
+		va_list copy;
+		va_copy(copy, vl);
+		av_log_default_callback(ptr, level, fmt, copy);
+		va_end(copy);
+
+		// The callback is called for all the levels, we filter ourselves,
+		// the color tint is in the high byte of the level.
+		if (!Logs::DebugEnabled() || (level & 0xff) > av_log_get_level()) {
+			return;
+		}
+
+		// One message can be logged in several calls and it can be cut
+		// together with the trailing newline, so check the full length.
+		thread_local auto prefix = 1;
+		thread_local auto accumulated = QByteArray();
+		char line[1024] = { 0 };
+		const auto length = av_log_format_line2(
+			ptr, level, fmt, vl, line, sizeof(line), &prefix);
+		accumulated.append(line);
+		if (accumulated.endsWith('\n') || length >= int(sizeof(line))) {
+			const auto msg = accumulated.trimmed();
+			accumulated.clear();
+			LOG((QString::fromUtf8(msg)));
 		}
 	});
 }
@@ -550,6 +595,7 @@ void Launcher::processArguments() {
 	auto parseMap = std::map<QByteArray, KeyFormat> {
 		{ "-debug"          , KeyFormat::NoValues },
 		{ "-testagent"      , KeyFormat::NoValues },
+		{ Platform::kUntranslocatedArgument, KeyFormat::NoValues },
 		{ "-key"            , KeyFormat::OneValue },
 		{ "-autostart"      , KeyFormat::NoValues },
 		{ "-fixprevious"    , KeyFormat::NoValues },

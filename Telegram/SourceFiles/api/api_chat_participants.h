@@ -7,9 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/timer.h"
 #include "data/data_chat_participant_status.h"
 #include "mtproto/sender.h"
-#include "base/timer.h"
 
 class ApiWrap;
 class ChannelData;
@@ -88,7 +88,7 @@ private:
 class ChatParticipants final {
 public:
 	struct Parsed {
-		const int availableCount;
+		const int availableCount = 0;
 		const std::vector<ChatParticipant> list;
 	};
 
@@ -135,6 +135,10 @@ public:
 		not_null<PeerData*> participant,
 		ChatRestrictionsInfo currentRights);
 	void unblock(
+		not_null<ChannelData*> channel,
+		not_null<PeerData*> participant);
+
+	[[nodiscard]] rpl::producer<bool> kickedValue(
 		not_null<ChannelData*> channel,
 		not_null<PeerData*> participant);
 
@@ -185,6 +189,17 @@ private:
 		not_null<ChannelData*>,
 		not_null<PeerData*>>;
 	base::flat_map<KickRequest, mtpRequestId> _kickRequests;
+
+	struct Kicked {
+		rpl::variable<bool> value = false;
+		mtpRequestId requestId = 0;
+	};
+	void applyKicked(
+		not_null<ChannelData*> channel,
+		not_null<PeerData*> participant,
+		bool kicked);
+
+	base::flat_map<KickRequest, std::unique_ptr<Kicked>> _kicked;
 
 	base::flat_map<not_null<PeerData*>, SimilarPeers> _similar;
 	rpl::event_stream<not_null<PeerData*>> _similarLoaded;

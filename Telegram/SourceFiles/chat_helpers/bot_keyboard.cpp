@@ -14,12 +14,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item_components.h"
 #include "main/main_session.h"
-#include "ui/cached_round_corners.h"
 #include "ui/chat/chat_style_radius.h"
+#include "ui/cached_round_corners.h"
 #include "ui/painter.h"
 #include "ui/round_rect.h"
 #include "ui/ui_utility.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_widgets.h"
 
@@ -196,6 +197,16 @@ BotKeyboard::BotKeyboard(
 	setGeometry(0, 0, _st->margin, st::botKbScroll.deltat);
 	_height = st::botKbScroll.deltat;
 	setMouseTracking(true);
+
+	_controller->session().data().itemRemoved(
+	) | rpl::filter([=](not_null<const HistoryItem*> item) {
+		return item->fullId() == _wasForMsgId;
+	}) | rpl::on_next([=] {
+		_maximizeSize = _singleUse = _forceReply = _persistent = false;
+		_placeholder = QString();
+		clearSelection();
+		_impl = nullptr;
+	}, lifetime());
 }
 
 void BotKeyboard::paintEvent(QPaintEvent *e) {
@@ -342,24 +353,23 @@ bool BotKeyboard::updateMarkup(HistoryItem *to, bool force) {
 	_wasForMsgId = FullMsgId(peerId, to->id);
 
 	auto markupFlags = to->replyKeyboardFlags();
+	const auto markup = to->Get<HistoryMessageReplyMarkup>();
+	const auto hasVisibleRows = markup
+		&& !markup->data.rows.empty()
+		&& !(markupFlags & ReplyMarkupFlag::Inline);
 	_forceReply = markupFlags & ReplyMarkupFlag::ForceReply;
 	_maximizeSize = !(markupFlags & ReplyMarkupFlag::Resize);
-	_singleUse = _forceReply || (markupFlags & ReplyMarkupFlag::SingleUse);
+	_singleUse = (_forceReply && !hasVisibleRows)
+		|| (markupFlags & ReplyMarkupFlag::SingleUse);
 	_persistent = (markupFlags & ReplyMarkupFlag::Persistent);
 
-	if (const auto markup = to->Get<HistoryMessageReplyMarkup>()) {
-		_placeholder = markup->data.placeholder;
-	} else {
-		_placeholder = QString();
-	}
+	_placeholder = markup ? markup->data.placeholder : QString();
 
 	_impl = nullptr;
-	if (auto markup = to->Get<HistoryMessageReplyMarkup>()) {
-		if (!markup->data.rows.empty()) {
-			_impl = std::make_unique<ReplyKeyboard>(
-				to,
-				std::make_unique<Style>(this, *_st));
-		}
+	if (hasVisibleRows) {
+		_impl = std::make_unique<ReplyKeyboard>(
+			to,
+			std::make_unique<Style>(this, *_st));
 	}
 
 	resizeToWidth(width(), _maxOuterHeight);
@@ -389,10 +399,6 @@ int BotKeyboard::resizeGetHeight(int newWidth) {
 	return _height;
 }
 
-bool BotKeyboard::maximizeSize() const {
-	return _maximizeSize;
-}
-
 bool BotKeyboard::singleUse() const {
 	return _singleUse;
 }
@@ -412,7 +418,7 @@ void BotKeyboard::updateStyle(int newWidth) {
 
 void BotKeyboard::clearSelection() {
 	if (_impl) {
-		if (ClickHandler::setActive(ClickHandlerPtr(), this)) {
+		if (ClickHandler::clearActive(this)) {
 			Ui::Tooltip::Hide();
 			setCursor(style::cur_default);
 		}

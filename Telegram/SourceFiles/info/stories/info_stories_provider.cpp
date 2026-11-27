@@ -7,9 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/stories/info_stories_provider.h"
 
-#include "info/media/info_media_widget.h"
-#include "info/media/info_media_list_section.h"
-#include "info/info_controller.h"
+#include "core/application.h"
 #include "data/data_changes.h"
 #include "data/data_channel.h"
 #include "data/data_document.h"
@@ -17,13 +15,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_stories.h"
 #include "data/data_stories_ids.h"
-#include "main/main_account.h"
-#include "main/main_session.h"
+#include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_helpers.h"
-#include "history/history.h"
-#include "core/application.h"
+#include "info/media/info_media_list_section.h"
+#include "info/media/info_media_widget.h"
+#include "info/info_controller.h"
 #include "layout/layout_selection.h"
+#include "main/main_account.h"
+#include "main/main_session.h"
+
 #include "styles/style_info.h"
 
 namespace Info::Stories {
@@ -158,7 +159,7 @@ void Provider::checkPreload(
 		if (!preloadRequired) {
 			auto delta = _slice.distance(_aroundId, id);
 			Assert(delta != std::nullopt);
-			preloadRequired = (qAbs(*delta) >= minIdDelta);
+			preloadRequired = (std::abs(*delta) >= minIdDelta);
 		}
 		if (preloadRequired) {
 			_idsLimit = preloadIdsLimit;
@@ -284,14 +285,23 @@ bool Provider::isAfter(
 void Provider::storyRemoved(not_null<Data::Story*> story) {
 	Expects(story->peer() == _peer);
 
-	if (const auto i = _layouts.find(story->id()); i != end(_layouts)) {
-		_peer->owner().stories().unregisterPolling(
-			story,
-			Data::Stories::Polling::Chat);
+	const auto id = story->id();
+	if (const auto i = _layouts.find(id); i != end(_layouts)) {
 		_layoutRemoved.fire(i->second.item.get());
-		_layouts.erase(i);
+		// The list widget handles layoutRemoved() synchronously and may
+		// refresh its height from there, which can reach refreshViewer()
+		// -> refreshRows() -> fillSections() -> clearStaleLayouts() before
+		// we get back here, erasing this very entry (and unregistering
+		// its polling), so look it up again and unregister only if we
+		// are the ones erasing it.
+		if (const auto j = _layouts.find(id); j != end(_layouts)) {
+			_peer->owner().stories().unregisterPolling(
+				story,
+				Data::Stories::Polling::Chat);
+			_layouts.erase(j);
+		}
 	}
-	_items.remove(story->id());
+	_items.remove(id);
 }
 
 BaseLayout *Provider::getLayout(

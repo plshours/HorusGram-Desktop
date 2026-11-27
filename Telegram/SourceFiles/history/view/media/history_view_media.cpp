@@ -6,32 +6,35 @@ For license and copyright information please follow this link:
 https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "history/view/media/history_view_media.h"
-#include "ui/basic_click_handlers.h"
 
 #include "boxes/send_credits_box.h" // CreditsEmoji.
-#include "history/history.h"
-#include "history/history_item.h"
-#include "history/view/history_view_element.h"
-#include "history/view/history_view_cursor_state.h"
-#include "history/view/history_view_text_helper.h"
+#include "core/ui_integration.h"
+#include "data/data_document.h"
+#include "data/data_document_media.h"
+#include "data/data_file_click_handler.h"
+#include "data/data_session.h"
+#include "data/data_web_page.h"
 #include "history/view/media/history_view_media_common.h"
 #include "history/view/media/history_view_media_spoiler.h"
 #include "history/view/media/history_view_sticker.h"
-#include "storage/storage_shared_media.h"
-#include "data/data_document.h"
-#include "data/data_session.h"
-#include "data/data_web_page.h"
+#include "history/view/history_view_cursor_state.h"
+#include "history/view/history_view_element.h"
+#include "history/view/history_view_text_helper.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "lang/lang_keys.h"
-#include "ui/item_text_options.h"
+#include "storage/storage_shared_media.h"
 #include "ui/chat/chat_style.h"
 #include "ui/chat/message_bubble.h"
 #include "ui/effects/spoiler_mess.h"
 #include "ui/image/image_prepare.h"
+#include "ui/text/text_utilities.h"
+#include "ui/basic_click_handlers.h"
 #include "ui/cached_round_corners.h"
+#include "ui/item_text_options.h"
 #include "ui/painter.h"
 #include "ui/power_saving.h"
-#include "ui/text/text_utilities.h"
-#include "core/ui_integration.h"
+
 #include "styles/style_chat.h"
 #include "styles/style_chat_helpers.h"
 #include "styles/style_menu_icons.h" // mediaMenuIconStealth.
@@ -201,7 +204,8 @@ Storage::SharedMediaTypesMask Media::sharedMediaTypes() const {
 }
 
 bool Media::allowTextSelectionByHandler(
-		const ClickHandlerPtr &handler) const {
+		const ClickHandlerPtr &handler,
+		bool fromTouch) const {
 	return false;
 }
 
@@ -218,7 +222,7 @@ SelectedQuote Media::selectedQuote(TextSelection selection) const {
 }
 
 QSize Media::countCurrentSize(int newWidth) {
-	return QSize(qMin(newWidth, maxWidth()), minHeight());
+	return QSize(std::min(newWidth, maxWidth()), minHeight());
 }
 
 bool Media::hasPurchasedTag() const {
@@ -521,6 +525,25 @@ void Media::createSpoilerLink(not_null<MediaSpoiler*> spoiler) {
 			return;
 		}
 		const auto view = media->parent();
+		const auto item = view->data();
+		if (item->isTtlCoveredMedia()) {
+			if (const auto photo = media->getPhoto()) {
+				view->delegate()->elementOpenPhoto(photo, item->fullId());
+			} else if (const auto document = media->getDocument()) {
+				if (document->createMediaView()->canBePlayed()) {
+					view->delegate()->elementOpenDocument(
+						document,
+						item->fullId(),
+						true);
+				} else if (!document->loading()) {
+					DocumentSaveClickHandler::Save(
+						item->fullId(),
+						document,
+						DocumentSaveClickHandler::Mode::ToCacheOrFile);
+				}
+			}
+			return;
+		}
 		spoiler->revealed = true;
 		spoiler->revealAnimation.start([=] {
 			view->repaint();
@@ -632,9 +655,7 @@ HistoryItem *Media::itemForText() const {
 }
 
 bool Media::isRoundedInBubbleBottom() const {
-	return isBubbleBottom()
-		&& !_parent->data()->repliesAreComments()
-		&& !_parent->data()->externalReply();
+	return isBubbleBottom() && !_parent->hasCommentsButton();
 }
 
 Images::CornersMaskRef MediaRoundingMask(

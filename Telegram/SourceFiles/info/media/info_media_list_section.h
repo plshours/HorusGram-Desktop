@@ -28,6 +28,7 @@ public:
 	[[nodiscard]] int top() const;
 	void setCanReorder(bool);
 	void setMinGridSize(int value);
+	void setMaxGridColumns(int value);
 	void resizeToWidth(int newWidth);
 	[[nodiscard]] int height() const;
 
@@ -65,18 +66,17 @@ private:
 		Items::const_iterator from,
 		int bottom) const;
 	[[nodiscard]] QRect findItemRect(not_null<const BaseLayout*> item) const;
-	[[nodiscard]] ListFoundItem completeResult(
-		not_null<BaseLayout*> item,
-		bool exact) const;
 	[[nodiscard]] TextSelection itemSelection(
 		not_null<const BaseLayout*> item,
 		const ListContext &context) const;
 
 	int recountHeight();
 	void refreshHeight();
+	void refreshMinId();
 
 	Type _type = Type{};
 	not_null<ListSectionDelegate*> _delegate;
+	UniversalMsgId _minId = 0;
 
 	bool _hasFloatingHeader = false;
 	Ui::Text::String _header;
@@ -93,6 +93,7 @@ private:
 	int _top = 0;
 	int _height = 0;
 	int _minGridSize = 0;
+	int _maxGridColumns = 0;
 	bool _canReorder = false;
 
 	Mosaic::Layout::MosaicLayout<BaseLayout> _mosaic;

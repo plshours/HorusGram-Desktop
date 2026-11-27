@@ -12,18 +12,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/components/ephemeral_messages.h"
 #include "data/data_peer.h"
 #include "data/data_photo.h"
+#include "data/data_report.h"
 #include "history/history.h"
 #include "history/history_item.h"
-#include "main/main_session.h"
 #include "lang/lang_keys.h"
+#include "main/main_session.h"
 #include "ui/boxes/report_box_graphics.h"
 #include "ui/layers/generic_box.h"
+#include "ui/widgets/fields/input_field.h"
+#include "ui/widgets/buttons.h"
 #include "ui/rect.h"
 #include "ui/vertical_list.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/fields/input_field.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_chat_helpers.h"
 
 namespace {
@@ -72,18 +74,26 @@ void ShowReportFlowBox(
 		not_null<PeerData*> peer,
 		Fn<void(Data::ReportInput, Fn<void(Api::ReportResult)>)> report,
 		Data::ReportInput initialInput,
-		const style::ReportBox *stOverride) {
+		const style::ReportBox *stOverride,
+		Fn<Window::SessionController*()> resolveController) {
 	auto performRequest = [=](
 			const auto &repeatRequest,
 			Data::ReportInput reportInput) -> void {
 		report(reportInput, [=](const Api::ReportResult &result) {
+			if (!show->valid()) {
+				return;
+			}
 			if (!result.error.isEmpty()) {
 				if (result.error == u"MESSAGE_ID_REQUIRED"_q) {
-					const auto widget = show->toastParent();
-					const auto window = Core::App().findWindow(widget);
-					const auto controller = window
-						? window->sessionController()
-						: nullptr;
+					auto controller = (Window::SessionController*)nullptr;
+					if (resolveController) {
+						controller = resolveController();
+					} else {
+						const auto widget = show->toastParent();
+						if (const auto window = Core::App().findWindow(widget)) {
+							controller = window->sessionController();
+						}
+					}
 					if (controller) {
 						const auto callback = [=](std::vector<MsgId> ids) {
 							auto copy = reportInput;
@@ -208,13 +218,15 @@ void ShowReportMessageBox(
 		not_null<PeerData*> peer,
 		const std::vector<MsgId> &ids,
 		const std::vector<StoryId> &stories,
-		const style::ReportBox *stOverride) {
+		const style::ReportBox *stOverride,
+		Fn<Window::SessionController*()> resolveController) {
 	ShowReportFlowBox(
 		show,
 		peer,
 		Api::CreateReportMessagesOrStoriesCallback(show, peer),
 		{ .ids = ids, .stories = stories },
-		stOverride);
+		stOverride,
+		std::move(resolveController));
 }
 
 void ShowReportEphemeralBox(
@@ -231,5 +243,6 @@ void ShowReportEphemeralBox(
 		peer,
 		Api::CreateReportEphemeralMessageCallback(show, peer, ephemeralId),
 		{},
+		nullptr,
 		nullptr);
 }

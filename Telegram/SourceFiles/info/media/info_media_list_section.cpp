@@ -7,11 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "info/media/info_media_list_section.h"
 
-#include "storage/storage_shared_media.h"
 #include "layout/layout_selection.h"
-#include "ui/rect.h"
+#include "storage/storage_shared_media.h"
 #include "ui/painter.h"
+#include "ui/rect.h"
 #include "ui/rows_scroll_cache.h"
+
 #include "styles/style_chat_helpers.h"
 #include "styles/style_info.h"
 
@@ -36,7 +37,7 @@ bool ListSection::empty() const {
 UniversalMsgId ListSection::minId() const {
 	Expects(!empty());
 
-	return GetUniversalId(_items.back()->getItem());
+	return _minId;
 }
 
 void ListSection::setTop(int top) {
@@ -53,6 +54,10 @@ void ListSection::setCanReorder(bool value) {
 
 void ListSection::setMinGridSize(int value) {
 	_minGridSize = value;
+}
+
+void ListSection::setMaxGridColumns(int value) {
+	_maxGridColumns = value;
 }
 
 int ListSection::height() const {
@@ -105,12 +110,19 @@ bool ListSection::belongsHere(
 void ListSection::appendItem(not_null<BaseLayout*> item) {
 	_items.push_back(item);
 	_byItem.emplace(item->getItem(), item);
+	_minId = GetUniversalId(item->getItem());
 }
 
 bool ListSection::removeItem(not_null<const HistoryItem*> item) {
 	if (const auto i = _byItem.find(item); i != end(_byItem)) {
 		_items.erase(ranges::remove(_items, i->second), end(_items));
 		_byItem.erase(i);
+		if (!_mosaic.empty()) {
+			// Without touching the removed layout, see refreshMinId().
+			_mosaic.clearRows(true);
+			_mosaic.addItems(_items);
+		}
+		refreshMinId();
 		refreshHeight();
 		return true;
 	}
@@ -119,7 +131,18 @@ bool ListSection::removeItem(not_null<const HistoryItem*> item) {
 
 void ListSection::reorderItems(int oldPosition, int newPosition) {
 	base::reorder(_items, oldPosition, newPosition);
+	refreshMinId();
 	refreshHeight();
+}
+
+void ListSection::refreshMinId() {
+	// The layouts are owned by the Provider and it destroys them from its
+	// own itemRemoved() handler, which is invoked before ours. So minId()
+	// must not dereference them, it is recomputed only when all the items
+	// that are left in the section are known to be alive.
+	_minId = _items.empty()
+		? UniversalMsgId()
+		: GetUniversalId(_items.back()->getItem());
 }
 
 QRect ListSection::findItemRect(
@@ -133,12 +156,6 @@ QRect ListSection::findItemRect(
 	const auto left = _itemsLeft
 		+ indexInRow * (_itemWidth + st::infoMediaSkip);
 	return QRect(left, top, _itemWidth, item->height());
-}
-
-ListFoundItem ListSection::completeResult(
-		not_null<BaseLayout*> item,
-		bool exact) const {
-	return { item, findItemRect(item), exact };
 }
 
 ListFoundItem ListSection::findItemByPoint(QPoint point) const {
@@ -158,9 +175,8 @@ ListFoundItem ListSection::findItemByPoint(QPoint point) const {
 	auto item = *itemIt;
 	auto rect = findItemRect(item);
 	if (point.y() >= rect.top()) {
-		auto shift = floorclamp(
-			point.x(),
-			(_itemWidth + st::infoMediaSkip),
+		auto shift = std::clamp(
+			point.x() / (_itemWidth + st::infoMediaSkip),
 			0,
 			_itemsInRow);
 		while (shift-- && itemIt != _items.end()) {
@@ -420,6 +436,9 @@ void ListSection::resizeToWidth(int newWidth) {
 		_itemsTop = st::infoMediaSkip;
 		_itemsInRow = (newWidth - _itemsLeft * 2 + skip)
 			/ (gridSize + skip);
+		if (_maxGridColumns > 0) {
+			_itemsInRow = std::min(_itemsInRow, _maxGridColumns);
+		}
 		_itemWidth = ((newWidth - _itemsLeft * 2 + skip) / _itemsInRow)
 			- st::infoMediaSkip;
 		_itemsLeft = (newWidth - (_itemWidth + skip) * _itemsInRow + skip)

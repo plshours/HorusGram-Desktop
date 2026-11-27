@@ -8,7 +8,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "data/data_abstract_sparse_ids.h"
-
 #include "history/history_item.h"
 
 class PeerData;
@@ -27,6 +26,7 @@ public:
 
 	[[nodiscard]] bool countKnown(PeerId peerId) const;
 	[[nodiscard]] int count(PeerId peerId) const;
+	[[nodiscard]] bool fullyLoaded(PeerId peerId) const;
 	[[nodiscard]] const std::vector<not_null<HistoryItem*>> &list(
 		PeerId peerId) const;
 	void loadMore(PeerId peerId);

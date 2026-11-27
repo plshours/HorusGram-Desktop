@@ -9,9 +9,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/object_ptr.h"
 #include "mtproto/sender.h"
+#include "ui/effects/animations.h"
 #include "ui/text/text_variant.h"
 #include "ui/rp_widget.h"
-#include "ui/effects/animations.h"
 
 namespace style {
 struct RoundButton;
@@ -119,8 +119,6 @@ protected:
 
 	void fillSentCodeData(const MTPDauth_sentCode &type);
 
-	void showDescription();
-	void hideDescription();
 	[[nodiscard]] int descriptionBottomOffset() const;
 	void notifyLayoutChanged();
 

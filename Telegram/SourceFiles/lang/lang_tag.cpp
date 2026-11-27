@@ -964,6 +964,9 @@ QString FormatExactCountDecimal(float64 number) {
 	while (result.endsWith(zero)) {
 		result.chop(1);
 	}
+	if (result.endsWith(locale.decimalPoint())) {
+		return locale.toString(int64(base::SafeRound(number)));
+	}
 	return result;
 }
 
@@ -990,7 +993,7 @@ PluralResult Plural(
 	// To correctly select a shift for PluralType::Short
 	// we must first round the number.
 	const auto shortened = (type == lt_count_short)
-		? FormatCountToShort(qRound(value))
+		? FormatCountToShort(int(base::SafeRound(value)))
 		: ShortenedCount();
 
 	// Simplified.
@@ -1012,7 +1015,7 @@ PluralResult Plural(
 		? ChoosePlural
 		: ChoosePluralDefault)((integer ? i : -1), i, v, w, f, t);
 	if (integer) {
-		const auto round = qRound(value);
+		const auto round = int(base::SafeRound(value));
 		if (type == lt_count_short) {
 			return { shift, shortened.string };
 		} else if (type == lt_count_decimal) {
@@ -1020,7 +1023,7 @@ PluralResult Plural(
 		}
 		return { shift, QString::number(round) };
 	}
-	return { shift, FormatDouble(value) };
+	return { shift, FormatDouble(value).replace('.', QLocale().decimalPoint()) };
 }
 
 void UpdatePluralRules(const QString &languageId) {

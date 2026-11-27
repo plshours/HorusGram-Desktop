@@ -9,10 +9,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/unixtime.h"
 #include "core/application.h"
+#include "core/ui_integration.h"
 #include "data/components/passkeys.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_passkey_deserialize.h"
 #include "data/data_session.h"
-#include "data/stickers/data_custom_emoji.h"
 #include "lang/lang_keys.h"
 #include "lottie/lottie_icon.h"
 #include "main/main_session.h"
@@ -23,20 +24,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_common.h"
 #include "settings/settings_common_session.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/controls/button_busy.h"
 #include "ui/layers/generic_box.h"
-#include "ui/painter.h"
-#include "ui/rect.h"
 #include "ui/text/custom_emoji_instance.h"
 #include "ui/text/text_utilities.h"
-#include "ui/vertical_list.h"
-#include "ui/widgets/buttons.h"
-#include "ui/widgets/popup_menu.h"
 #include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/widgets/menu/menu_add_action_callback_factory.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/popup_menu.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/painter.h"
+#include "ui/rect.h"
+#include "ui/vertical_list.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
+
 #include "styles/style_boxes.h"
 #include "styles/style_channel_earn.h"
 #include "styles/style_chat.h"
@@ -198,13 +201,30 @@ void Passkeys::setupContent() {
 					const auto popup = Ui::CreateChild<Ui::PopupMenu>(
 						menu,
 						st::popupMenuWithIcons);
-					const auto handler = [=, id = passkey.id] {
+					const auto id = passkey.id;
+					const auto name = passkey.name;
+					const auto emojiId = passkey.softwareEmojiId;
+					const auto handler = [=] {
+						auto named = emojiId
+							? Ui::Text::SingleCustomEmoji(
+								Data::SerializeCustomEmojiId(emojiId)
+							).append(' ')
+							: tr::marked();
+						named.append(tr::bold(name));
+						auto about = name.isEmpty()
+							? tr::lng_settings_passkeys_delete_sure_about(
+								tr::marked)
+							: tr::lng_settings_passkeys_delete_sure_about_name(
+								lt_name,
+								rpl::single(std::move(named)),
+								tr::marked);
 						ctrl->show(Ui::MakeConfirmBox({
 							.text = rpl::combine(
-								tr::lng_settings_passkeys_delete_sure_about(),
+								std::move(about),
 								tr::lng_settings_passkeys_delete_sure_about2()
-							) | rpl::map([](QString a, QString b) {
-								return a + "\n\n" + b;
+							) | rpl::map([](TextWithEntities a, QString b) {
+								a.append("\n\n").append(b);
+								return a;
 							}),
 							.confirmed = [=](Fn<void()> close) {
 								session->passkeys().deletePasskey(
@@ -214,6 +234,9 @@ void Passkeys::setupContent() {
 							},
 							.confirmText = tr::lng_box_delete(),
 							.confirmStyle = &st::attentionBoxButton,
+							.labelContext = Core::TextContext({
+								.session = session,
+							}),
 							.title
 								= tr::lng_settings_passkeys_delete_sure_title(),
 						}));
@@ -481,9 +504,7 @@ void PasskeysNoneBox(
 			}));
 		});
 		if (!canRegister) {
-			button->setAttribute(Qt::WA_TransparentForMouseEvents);
-			button->setTextFgOverride(
-				anim::with_alpha(button->st().textFg->c, 0.5));
+			Ui::SetButtonDimmed(createButton, true);
 		}
 		box->addButton(std::move(button));
 
