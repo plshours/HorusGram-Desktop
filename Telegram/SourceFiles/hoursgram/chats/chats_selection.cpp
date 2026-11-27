@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/vertical_layout.h"
 #include "ui/vertical_list.h"
 #include "window/window_peer_menu.h"
+#include "menu/menu_mark_as_read.h"
 #include "window/window_session_controller.h"
 #include "styles/style_hoursgram_design.h"
 #include "styles/style_layers.h"
@@ -128,7 +129,7 @@ not_null<Ui::RpWidget*> CreateSelectionBar(
 
 	read->setClickedCallback([=] {
 		for (const auto &history : selected()) {
-			Window::MarkAsReadThread(history);
+			MarkAsReadMenu::MarkAsReadThread(history);
 		}
 		clear();
 	});
