@@ -12,8 +12,10 @@
 #include "ui/wrap/slide_wrap.h"
 #include "ui/painter.h"
 #include "ui/wrap/vertical_layout.h"
+#include "ui/qt_object_factory.h"
 #include "ui/ui_utility.h"
 #include "styles/style_widgets.h"
+#include "styles/palette.h"
 
 #include <QtCore/QPointer>
 #include <QtGui/QPainter>

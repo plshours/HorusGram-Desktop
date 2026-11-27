@@ -19,6 +19,7 @@
 #include "lang_auto.h"
 #include "ui/abstract_button.h"
 #include "ui/painter.h"
+#include "ui/qt_object_factory.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/wrap/padding_wrap.h"
@@ -29,6 +30,7 @@
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
+#include "styles/palette.h"
 
 namespace HoursGram::Customization {
 namespace {
