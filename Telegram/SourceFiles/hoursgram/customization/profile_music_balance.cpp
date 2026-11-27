@@ -13,6 +13,7 @@
 #include "data/data_user.h"
 #include "history/history_item.h"
 #include "info/info_controller.h"
+#include "info/info_memento.h"
 #include "info/profile/info_profile_balance_pill.h"
 #include "info/profile/info_profile_music_button.h"
 #include "info/saved/info_saved_music_widget.h"
@@ -135,7 +136,8 @@ void AddProfileMusicBalance(
 				layout,
 				object_ptr<Ui::RpWidget>(layout),
 				st::infoProfileMusicPadding)));
-	const auto row = wrap->entity()->entity();
+	// The entity of nested wraps is the innermost widget already.
+	const auto row = wrap->entity();
 
 	struct State {
 		Info::Profile::AyuMusicButton *music = nullptr;
