@@ -291,13 +291,21 @@ int Card::resizeGetHeight(int newWidth) {
 	return (weak && weak->height()) ? result : 0;
 }
 
+// The width of a card is the width the layout gives it, never the width of
+// its content: a block created hidden still has the width it was born with,
+// which is the whole layout, and a card taking that from it stuck out of the
+// panel on the right. Only the height follows the content.
 void Card::wrappedSizeUpdated(QSize size) {
-	if (size.height() > 0) {
-		PaddingWrap::wrappedSizeUpdated(size);
-		return;
-	}
 	const auto padding = this->padding();
-	resize(padding.left() + size.width() + padding.right(), 0);
+	const auto height = (size.height() > 0)
+		? (padding.top() + size.height() + padding.bottom())
+		: 0;
+	resize(width(), height);
+	const auto inner = width() - padding.left() - padding.right();
+	if (const auto weak = wrapped(); weak && inner > 0
+		&& weak->width() != inner) {
+		weak->resizeToWidth(inner);
+	}
 }
 
 void Card::paintEvent(QPaintEvent *e) {
