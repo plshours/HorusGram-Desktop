@@ -175,6 +175,8 @@ private:
 	[[nodiscard]] int cardRadius(QSize size) const;
 
 	const int _radius = 0;
+	int _targetWidth = 0;
+	bool _fixingWidth = false;
 	std::array<RpWidget*, kCorners> _corners = { nullptr };
 	bool _top = true;
 	bool _bottom = true;
@@ -286,6 +288,7 @@ void Card::scheduleCornerUpdate() {
 // A block that hides itself collapses to no height at all, and the card
 // collapses with it so that no empty rounded shape is left behind.
 int Card::resizeGetHeight(int newWidth) {
+	_targetWidth = newWidth;
 	const auto result = PaddingWrap::resizeGetHeight(newWidth);
 	const auto weak = wrapped();
 	return (weak && weak->height()) ? result : 0;
@@ -297,15 +300,24 @@ int Card::resizeGetHeight(int newWidth) {
 // panel on the right. Only the height follows the content.
 void Card::wrappedSizeUpdated(QSize size) {
 	const auto padding = this->padding();
+	const auto target = _targetWidth ? _targetWidth : width();
+	const auto inner = target - padding.left() - padding.right();
+	if (const auto weak = wrapped(); weak
+		&& !_fixingWidth
+		&& _targetWidth > 0
+		&& inner > 0
+		&& size.width() != inner) {
+		// The content made itself wider or narrower than the card, it
+		// is put back to the width the layout gave the card.
+		_fixingWidth = true;
+		weak->resizeToWidth(inner);
+		_fixingWidth = false;
+		return;
+	}
 	const auto height = (size.height() > 0)
 		? (padding.top() + size.height() + padding.bottom())
 		: 0;
-	resize(width(), height);
-	const auto inner = width() - padding.left() - padding.right();
-	if (const auto weak = wrapped(); weak && inner > 0
-		&& weak->width() != inner) {
-		weak->resizeToWidth(inner);
-	}
+	resize(target, height);
 }
 
 void Card::paintEvent(QPaintEvent *e) {
