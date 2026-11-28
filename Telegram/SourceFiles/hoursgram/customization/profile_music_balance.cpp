@@ -179,7 +179,7 @@ int BalanceCard::resizeGetHeight(int newWidth) {
 }
 
 void BalanceCard::paintEvent(QPaintEvent *e) {
-	auto p = QPainter(this);
+	auto p = Painter(this);
 	auto hq = PainterHighQualityEnabler(p);
 	const auto radius = st::infoProfileMusicRadius;
 	p.setPen(Qt::NoPen);
